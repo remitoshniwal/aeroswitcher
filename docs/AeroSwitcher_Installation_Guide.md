@@ -195,6 +195,14 @@ The `aerospace/` folder in this repo holds copies of `~/.aerospace.toml` and the
 
 It only copies from your Mac into the repo, never the other way, so it can't break your running setup. It prints which files changed, and `git diff aerospace/` shows the exact lines. Commit them if they look right. If a live file is missing it skips that file instead of blanking out the repo copy, and it warns if your home folder isn't the `/Users/remitoshniwal` path the files have written into them.
 
+At the end it also runs a **drift check** (`check-drift.js`), which compares `~/.aerospace.toml` with AeroSwitcher's `config.json` and lists apps that are set up in one but not the other, or in a different workspace in each. It only prints, it never changes either file. Some differences are on purpose (Finder is a launcher tile everywhere but has no AeroSpace rule), so put those in the `EXCEPTIONS` list at the top of `check-drift.js` and they stop being reported. You can also run it on its own:
+
+```
+osascript -l JavaScript check-drift.js
+```
+
+Matching app names between the two files is loose (the toml says "Ableton Live", config.json says "Ableton"), so an odd false alarm is possible. If it reports something that's clearly wrong, that matching is the place to look.
+
 ## If something doesn't work
 
 - **Cmd+Tab does nothing** → check Input Monitoring permission is granted to AeroSwitcher.

@@ -67,3 +67,9 @@ else
     echo
     echo "See the exact lines with:  git diff aerospace/"
 fi
+
+# While we're here, compare .aerospace.toml against AeroSwitcher's
+# config.json and point out apps that are set up in one but not the other.
+# Only prints, never changes anything. See check-drift.js for details.
+echo
+osascript -l JavaScript check-drift.js
