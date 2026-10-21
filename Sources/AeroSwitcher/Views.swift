@@ -253,16 +253,36 @@ private struct LauncherCard: View {
 // slice for the CURRENT page, already sized to fit — same "controller does
 // the math, this just draws it" split as SwitcherView. width/height match
 // the normal switcher's own maximum panel size exactly (see
-// currentPanelViewAndSize()), so the two panels feel like one app. No
-// scrolling, ever: paging with Tab/Shift+Tab or A/D keeps the whole thing
-// keyboard-driven with your left hand, same as the normal switcher,
-// rather than needing the mouse/trackpad to scroll.
+// currentPanelViewAndSize()), so the two panels feel like one app.
+// Paging with Tab/Shift+Tab or A/D keeps the whole thing keyboard-driven
+// with your left hand, same as the normal switcher, rather than needing
+// the mouse/trackpad to scroll. Even the one page that does scroll
+// (`scrollable` below) scrolls with W/S, with two-finger scrolling as an
+// extra on top.
 struct WorkspacesOverviewView: View {
     let workspaces: [WorkspaceSummary]
     let pageIndex: Int
     let totalPages: Int
     let width: CGFloat
     let height: CGFloat
+    // Last resort for when one workspace has so many apps open that its
+    // card alone is taller than the whole panel. Paging can't help there,
+    // a page can't hold less than one workspace, so the controller puts
+    // every busy workspace on one page instead (see computeOverviewPages
+    // and overviewPageNeedsScroll) and that page scrolls with W/S or two
+    // fingers instead of having its bottom rows cut off. False for every
+    // normal page, which then draws exactly the same as it did before
+    // this existed.
+    let scrollable: Bool
+    // The latest W/S press, passed along from the controller (the keys
+    // arrive through its event tap, not through this view), and a number
+    // that changes whenever the scroll position should go back to the top.
+    let scrollRequest: OverviewScrollRequest
+    let scrollResetKey: Int
+    // The rows W/S step through on that page, with where each one starts
+    // and ends, worked out by the controller (see overviewScrollRows).
+    // Empty on every normal page.
+    let scrollRows: [OverviewScrollRow]
 
     private let iconSize: CGFloat = 48
 
@@ -288,36 +308,27 @@ struct WorkspacesOverviewView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Self.cardGap) {
-            ForEach(workspaces) { workspace in
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(workspace.name)
-                        .foregroundColor(.white.opacity(0.6))
-                        .font(.system(size: 13, weight: .semibold))
-
-                    // No "Nothing open" label — an empty card is just the
-                    // name and blank space below it, at the same height a
-                    // one-row card would be.
-                    if !workspace.apps.isEmpty {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: Self.iconColumnWidth), spacing: Self.iconSpacing)], alignment: .leading, spacing: Self.iconSpacing) {
-                            ForEach(workspace.apps) { app in
-                                WorkspaceAppIcon(app: app, iconSize: iconSize)
-                            }
+            if scrollable {
+                // layoutPriority(1) makes the scroll area take ALL the
+                // leftover height before the Spacer below gets any, so the
+                // page dots stay pinned at the bottom of the panel like on
+                // every other page, and only the cards move. .id() throws
+                // away the scroll position whenever the controller bumps
+                // scrollResetKey (new session or new page), so every page
+                // opens scrolled to the top.
+                OverviewScrollArea(request: scrollRequest, rows: scrollRows) {
+                    VStack(alignment: .leading, spacing: Self.cardGap) {
+                        ForEach(workspaces) { workspace in
+                            workspaceCard(workspace)
                         }
                     }
                 }
-                .frame(minHeight: Self.minCardContentHeight, alignment: .topLeading)
-                .padding(Self.cardPadding)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                // A card per workspace, not just spacing between blocks of
-                // text — makes it obvious at a glance where one workspace
-                // ends and the next begins, especially once there are
-                // several in a row.
-                .background(Color.white.opacity(0.05))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                )
+                .id(scrollResetKey)
+                .layoutPriority(1)
+            } else {
+                ForEach(workspaces) { workspace in
+                    workspaceCard(workspace)
+                }
             }
 
             Spacer(minLength: 0)
@@ -344,6 +355,274 @@ struct WorkspacesOverviewView: View {
                 .stroke(Color.white.opacity(0.15), lineWidth: 1)
         )
     }
+
+    // One workspace's card. Pulled out of body only so the normal path and
+    // the scrolling path above draw the exact same card, rather than two
+    // copies of it that could slowly drift apart.
+    private func workspaceCard(_ workspace: WorkspaceSummary) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(workspace.name)
+                .foregroundColor(.white.opacity(0.6))
+                .font(.system(size: 13, weight: .semibold))
+
+            // No "Nothing open" label — an empty card is just the
+            // name and blank space below it, at the same height a
+            // one-row card would be.
+            if !workspace.apps.isEmpty {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: Self.iconColumnWidth), spacing: Self.iconSpacing)], alignment: .leading, spacing: Self.iconSpacing) {
+                    ForEach(workspace.apps) { app in
+                        WorkspaceAppIcon(app: app, iconSize: iconSize)
+                    }
+                }
+            }
+        }
+        .frame(minHeight: Self.minCardContentHeight, alignment: .topLeading)
+        .padding(Self.cardPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // A card per workspace, not just spacing between blocks of
+        // text — makes it obvious at a glance where one workspace
+        // ends and the next begins, especially once there are
+        // several in a row.
+        .background(Color.white.opacity(0.05))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+        )
+    }
+}
+
+// One W/S key going down or coming back up in the overview, handed from
+// the controller to OverviewScrollArea. `id` goes up by one on every
+// change, so two presses in a row in the same direction still count as
+// two separate changes (SwiftUI's onChange only fires when the value
+// actually differs). direction is +1 for down (S) and -1 for up (W).
+struct OverviewScrollRequest: Equatable {
+    var id = 0
+    var direction: CGFloat = 0
+    var isPressed = false
+}
+
+// One row W/S can step through on a scrolling overview page: where it
+// starts and ends, in points down from the top of the page. Built by the
+// controller (overviewScrollRows), which knows the layout numbers. A
+// workspace's first row includes its name, so it's taller than the rest.
+struct OverviewScrollRow {
+    let top: CGFloat
+    let bottom: CGFloat
+}
+
+// The scroll area for the one overview page that's taller than the
+// panel. A real ScrollView, so two-finger scrolling works, that W/S can
+// ALSO move. Moving a ScrollView to an exact spot from code needs
+// ScrollPosition, which only exists on macOS 15 and newer. This app
+// still supports macOS 14, so on 14 it falls back to a plain ScrollView:
+// two-finger scrolling only, W/S do nothing there.
+private struct OverviewScrollArea<Content: View>: View {
+    let request: OverviewScrollRequest
+    let rows: [OverviewScrollRow]
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        if #available(macOS 15, *) {
+            KeyboardScrollView(request: request, rows: rows, content: content)
+        } else {
+            ScrollView(.vertical) { content }
+        }
+    }
+}
+
+// The ScrollView for the scrolling overview page, with W/S driving it
+// through OverviewGlide below. Two-finger scrolling works as normal: it's
+// a real ScrollView, and the glide engine picks up from wherever you
+// scrolled to.
+@available(macOS 15, *)
+private struct KeyboardScrollView<Content: View>: View {
+    let request: OverviewScrollRequest
+    let rows: [OverviewScrollRow]
+    let content: Content
+
+    @State private var position = ScrollPosition(edge: .top)
+    @State private var glide = OverviewGlide()
+
+    var body: some View {
+        ScrollView(.vertical) { content }
+            .scrollPosition($position)
+            // Where the scroll view really is, how tall its visible area
+            // is, and how far it can go, all MEASURED by the scroll view
+            // itself rather than estimated, so the glide always stops
+            // exactly at the real top and bottom.
+            .onScrollGeometryChange(for: ScrollMetrics.self) { geometry in
+                ScrollMetrics(
+                    offset: geometry.contentOffset.y,
+                    visibleHeight: geometry.containerSize.height,
+                    maxOffset: max(0, geometry.contentSize.height + geometry.contentInsets.bottom - geometry.containerSize.height)
+                )
+            } action: { _, metrics in
+                glide.measured(metrics)
+            }
+            .onChange(of: request) { _, request in
+                // Handed over fresh on every key change, so the engine
+                // always moves THIS view's scroll position with this
+                // page's rows.
+                let binding = $position
+                glide.moveTo = { y in binding.wrappedValue.scrollTo(y: y) }
+                glide.rows = rows
+                if request.isPressed {
+                    glide.press(direction: request.direction)
+                } else {
+                    glide.release()
+                }
+            }
+    }
+}
+
+// The engine behind W/S scrolling. Instead of jumping or running one
+// fixed animation per press, it moves the page a tiny bit on every frame
+// the screen draws (a display link), always chasing a "target" position
+// with a soft spring. The spring keeps whatever speed the page already
+// has, which is what makes it glide:
+//   Tap S/W: the target moves one row. The page speeds up, then eases in
+//     and settles on it. Tapping again before it settles moves the target
+//     one row further from where it was heading, so quick taps build up
+//     speed (momentum) instead of restarting from zero each time.
+//   Hold S/W: after holdDelay, the target starts moving at a steady
+//     holdSpeed, and the page glides along behind it. On release, the
+//     target snaps forward to the next row edge, and the page eases into
+//     it, so it never stops halfway through a row.
+// Row edges here mean "bottom-aligned": every place the page can settle
+// has some row's bottom lined up exactly with the bottom of the visible
+// area (S reveals one more whole row at the bottom, W is the exact
+// reverse). The very top and very bottom of the page are edges too.
+@MainActor
+private final class OverviewGlide: NSObject {
+    // The three feel knobs. Change these to tune how scrolling feels.
+    // springStrength: how quickly the page catches up with its target.
+    //   Lower = floatier and slower to settle, higher = snappier. At 13 a
+    //   one-row tap settles in about 0.35s (10 took about 0.45s, which
+    //   felt a little slow).
+    private let springStrength: CGFloat = 13
+    // holdSpeed: how fast holding S/W glides, in points per second (one
+    //   row of icons is 82 points).
+    private let holdSpeed: CGFloat = 650
+    // holdDelay: how long a key has to be held before it counts as a hold
+    //   rather than a tap, in seconds.
+    private let holdDelay: CFTimeInterval = 0.2
+
+    var moveTo: (CGFloat) -> Void = { _ in }
+    var rows: [OverviewScrollRow] = []
+
+    private var measuredOffset: CGFloat = 0
+    private var visibleHeight: CGFloat = 0
+    private var maxOffset: CGFloat = 0
+
+    private var y: CGFloat = 0          // where the engine has the page right now
+    private var velocity: CGFloat = 0   // points per second, + is down
+    private var target: CGFloat = 0     // where the spring is pulling it to
+    private var direction: CGFloat = 0
+    private var pressedAt: CFTimeInterval?  // when S/W went down, nil once released
+    private var holding = false             // true once a press has lasted holdDelay
+    private var link: CADisplayLink?
+    private var lastFrame: CFTimeInterval = 0
+
+    func measured(_ metrics: ScrollMetrics) {
+        visibleHeight = metrics.visibleHeight
+        maxOffset = metrics.maxOffset
+        measuredOffset = metrics.offset
+        // While nothing is gliding, the measured position is the truth
+        // (two-finger scrolling may have moved it), so start from there.
+        if link == nil {
+            y = metrics.offset
+            target = metrics.offset
+        }
+    }
+
+    func press(direction: CGFloat) {
+        if link == nil {
+            y = measuredOffset
+            target = measuredOffset
+            velocity = 0
+        }
+        self.direction = direction
+        pressedAt = CACurrentMediaTime()
+        holding = false
+        // Every press, tap or hold, starts by moving one row.
+        target = nextEdge(after: target, direction: direction)
+        start()
+    }
+
+    func release() {
+        pressedAt = nil
+        if holding {
+            holding = false
+            target = edge(atOrPast: target, direction: direction)
+        }
+    }
+
+    // Every position the page is allowed to settle at, top to bottom.
+    private var edges: [CGFloat] {
+        let inside = rows.map { $0.bottom - visibleHeight }.filter { $0 > 0.5 && $0 < maxOffset - 0.5 }
+        return [0] + inside.sorted() + [maxOffset]
+    }
+
+    // The next edge strictly past `position` (one row on from it).
+    private func nextEdge(after position: CGFloat, direction: CGFloat) -> CGFloat {
+        if direction > 0 { return edges.first { $0 > position + 1 } ?? maxOffset }
+        return edges.last { $0 < position - 1 } ?? 0
+    }
+
+    // The nearest edge at or past `position` (for settling after a hold).
+    private func edge(atOrPast position: CGFloat, direction: CGFloat) -> CGFloat {
+        if direction > 0 { return edges.first { $0 >= position - 0.5 } ?? maxOffset }
+        return edges.last { $0 <= position + 0.5 } ?? 0
+    }
+
+    private func start() {
+        guard link == nil, let screen = NSScreen.main else { return }
+        let link = screen.displayLink(target: self, selector: #selector(frame(_:)))
+        link.add(to: .main, forMode: .common)
+        self.link = link
+        lastFrame = CACurrentMediaTime()
+    }
+
+    private func stop() {
+        link?.invalidate()
+        link = nil
+    }
+
+    @objc private func frame(_ link: CADisplayLink) {
+        let now = CACurrentMediaTime()
+        // Capped so a hiccup (a slow frame) can't make the page leap.
+        let dt = CGFloat(min(max(now - lastFrame, 1.0 / 240), 1.0 / 30))
+        lastFrame = now
+
+        if let pressedAt, !holding, now - pressedAt >= holdDelay { holding = true }
+        if holding {
+            target = min(max(target + direction * holdSpeed * dt, 0), maxOffset)
+        }
+
+        // A "critically damped" spring: pulls toward the target as fast
+        // as possible without ever overshooting it and bouncing back.
+        let distance = y - target
+        let acceleration = -springStrength * springStrength * distance - 2 * springStrength * velocity
+        velocity += acceleration * dt
+        y = min(max(y + velocity * dt, 0), maxOffset)
+        moveTo(y)
+
+        // Settled: close enough and slow enough, and no key held.
+        if pressedAt == nil && abs(target - y) < 0.5 && abs(velocity) < 2 {
+            y = target
+            velocity = 0
+            moveTo(y)
+            stop()
+        }
+    }
+}
+
+struct ScrollMetrics: Equatable {
+    let offset: CGFloat
+    let visibleHeight: CGFloat
+    let maxOffset: CGFloat
 }
 
 private struct WorkspaceAppIcon: View {

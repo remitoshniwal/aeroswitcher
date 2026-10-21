@@ -62,6 +62,19 @@ class SwitcherWindowController: NSObject {
     // Which page of workspaces the overview is currently showing. Reset to
     // 0 at the start of every overview session.
     private var overviewPageIndex = 0
+    // W/S scrolling for the rare overview page that's taller than the
+    // panel (see overviewPageNeedsScroll). The keys arrive here, through
+    // HotkeyManager's event tap, but only the SwiftUI scroll view knows
+    // how tall its content really is and where it's currently scrolled
+    // to (two-finger scrolling moves it too). So the controller doesn't
+    // track a position at all, it just passes each W/S press along as a
+    // request, and the view does the actual scrolling (see
+    // OverviewScrollArea in Views.swift).
+    private var overviewScrollRequest = OverviewScrollRequest()
+    // Bumped at the start of every overview session and on every page
+    // change. The view throws away its scroll position whenever this
+    // changes, so every page always opens scrolled to the top.
+    private var overviewScrollResetKey = 0
     // Whatever window was actually focused right before the overview panel
     // took over, so Escape/Cmd-release can hand focus back to it. Only used
     // in overview mode — the normal switcher uses items.first for this
@@ -132,6 +145,7 @@ class SwitcherWindowController: NSObject {
         confirmPending = false
         showingAllWorkspaces = true
         overviewPageIndex = 0
+        overviewScrollResetKey += 1
         show()
     }
 
@@ -441,12 +455,35 @@ class SwitcherWindowController: NSObject {
     func overviewPageUp() {
         guard overviewTotalPages > 1 else { return }
         overviewPageIndex = max(overviewPageIndex - 1, 0)
+        overviewScrollResetKey += 1
         refresh()
     }
 
     func overviewPageDown() {
         guard overviewTotalPages > 1 else { return }
         overviewPageIndex = min(overviewPageIndex + 1, overviewTotalPages - 1)
+        overviewScrollResetKey += 1
+        refresh()
+    }
+
+    // S (your configured enterGreyedRow) and W (exitGreyedRow) scroll the
+    // overview, but only on a page that's actually taller than the panel.
+    // The overview has no greyed launcher row, so these keys were doing
+    // nothing there, and they sit right next to A/D, so scrolling stays
+    // left-handed like everything else. On a normal page they still do
+    // nothing. HotkeyManager calls the first one when S/W goes DOWN (only
+    // the real press, not macOS's key repeats) and the second when it
+    // comes back UP. The view's glide engine turns that into "tap = one
+    // row, hold = keep gliding" (see OverviewGlide in Views.swift).
+    func overviewScrollPressed(direction: CGFloat) {
+        guard overviewPageNeedsScroll() else { return }
+        overviewScrollRequest = OverviewScrollRequest(id: overviewScrollRequest.id + 1, direction: direction, isPressed: true)
+        refresh()
+    }
+
+    func overviewScrollReleased() {
+        guard overviewPageNeedsScroll(), overviewScrollRequest.isPressed else { return }
+        overviewScrollRequest = OverviewScrollRequest(id: overviewScrollRequest.id + 1, direction: overviewScrollRequest.direction, isPressed: false)
         refresh()
     }
 
@@ -467,17 +504,94 @@ class SwitcherWindowController: NSObject {
         // also has a shared minimum height (minCardContentHeight) so an
         // empty workspace's card isn't visibly shorter than a busy one's.
         let cardPadding = WorkspacesOverviewView.cardPadding
-        let innerWidth = availableWidth - cardPadding * 2
         if workspace.apps.isEmpty {
             return WorkspacesOverviewView.minCardContentHeight + cardPadding * 2
         }
-        let columnWidth = WorkspacesOverviewView.iconColumnWidth
         let spacing = WorkspacesOverviewView.iconSpacing
-        let columns = max(1, Int((innerWidth + spacing) / (columnWidth + spacing)))
-        let iconRows = Int(ceil(Double(workspace.apps.count) / Double(columns)))
+        let iconRows = estimatedOverviewIconRows(workspace, availableWidth: availableWidth)
         let gridHeight = CGFloat(iconRows) * WorkspacesOverviewView.iconRowHeight + CGFloat(max(iconRows - 1, 0)) * spacing
         let contentHeight = max(WorkspacesOverviewView.minCardContentHeight, WorkspacesOverviewView.headerHeight + gridHeight)
         return contentHeight + cardPadding * 2
+    }
+
+    // How many rows of icons a workspace's card wraps onto: as many
+    // columns as fit across the card's inside width (the same sum the
+    // view's LazyVGrid does), then however many rows the apps need. Its
+    // own function because both the height estimate above and the W/S
+    // scroll rows (overviewScrollRows) need it.
+    private func estimatedOverviewIconRows(_ workspace: WorkspaceSummary, availableWidth: CGFloat) -> Int {
+        let innerWidth = availableWidth - WorkspacesOverviewView.cardPadding * 2
+        let columnWidth = WorkspacesOverviewView.iconColumnWidth
+        let spacing = WorkspacesOverviewView.iconSpacing
+        let columns = max(1, Int((innerWidth + spacing) / (columnWidth + spacing)))
+        return Int(ceil(Double(workspace.apps.count) / Double(columns)))
+    }
+
+    // Panel height for the rare overview page that scrolls. At full height
+    // the bottom edge of the scroll area would land wherever it happens to,
+    // usually halfway through a row of icons. Instead this picks the
+    // tallest height that still fits on screen AND ends exactly on a row's
+    // bottom edge, so the page looks like it ends cleanly. Every W/S press
+    // then keeps that bottom edge on a row edge too (S and W line rows up
+    // with the bottom, see OverviewGlide in Views.swift), so it stays clean
+    // while scrolling. Only that page gets this shorter panel. Every other
+    // page keeps the usual full height.
+    private func overviewScrollPanelHeight(rows: [OverviewScrollRow]) -> CGFloat {
+        let panelPadding: CGFloat = 48  // 24pt top + bottom
+        let gap = WorkspacesOverviewView.cardGap
+        // What the view stacks under the scroll area: a cardGap down to the
+        // (zero height) Spacer, and when there are page dots, another
+        // cardGap plus the 6pt dots themselves. Counting these exactly is
+        // the point here: the old budget's flat 22pt for the dots missed
+        // one of those gaps, which is why rows used to get cut off.
+        let below: CGFloat = overviewTotalPages > 1 ? gap + gap + 6 : gap
+        let available = windowMaxHeight() - panelPadding - below
+        let fitted = rows.map(\.bottom).filter { $0 <= available }.max() ?? available
+        return fitted + panelPadding + below
+    }
+
+    // The rows W/S step through on a scrolling overview page, top to
+    // bottom, each with where it starts and ends (measured down from the
+    // top of the page). A workspace's FIRST row counts together with its
+    // name as one taller row, since the name belongs with it. Every row's
+    // edges sit halfway into the empty gap around it, so lining a row up
+    // with the edge of the scroll area never cuts through app names or a
+    // card's border. The scroll view uses these to move by exactly the
+    // height of the next row each press, whatever that height is (see
+    // OverviewGlide in Views.swift).
+    //
+    // These positions use the same layout numbers as the height estimate
+    // (cardPadding, headerHeight, iconRowHeight...), which matched the
+    // real panel to within a point when checked against a screenshot. The
+    // very bottom is NOT taken from here: the scroll view measures that
+    // itself, so the last press always lands exactly on the real bottom.
+    private func overviewScrollRows() -> [OverviewScrollRow] {
+        let budget = overviewContentBudget()
+        let halfGap = WorkspacesOverviewView.cardGap / 2
+        let halfSpacing = WorkspacesOverviewView.iconSpacing / 2
+        let rowPitch = WorkspacesOverviewView.iconRowHeight + WorkspacesOverviewView.iconSpacing
+        var rows: [OverviewScrollRow] = []
+        var cardTop: CGFloat = 0
+        for workspace in overviewPageSlice() {
+            let cardBottom = cardTop + estimatedOverviewSectionHeight(workspace, availableWidth: budget.width)
+            let firstRowTop = cardTop + WorkspacesOverviewView.cardPadding + WorkspacesOverviewView.headerHeight
+            let iconRows = max(1, estimatedOverviewIconRows(workspace, availableWidth: budget.width))
+            for row in 0..<iconRows {
+                let rowTop = firstRowTop + CGFloat(row) * rowPitch
+                let isFirst = row == 0
+                let isLast = row == iconRows - 1
+                rows.append(OverviewScrollRow(
+                    // The first row starts at the card's top edge, so the
+                    // workspace name comes along with it.
+                    top: isFirst ? max(0, cardTop - halfGap) : rowTop - halfSpacing,
+                    // The last row ends at the card's bottom edge, so the
+                    // card's border and padding come along with it.
+                    bottom: isLast ? cardBottom + halfGap : rowTop + WorkspacesOverviewView.iconRowHeight + halfSpacing
+                ))
+            }
+            cardTop = cardBottom + WorkspacesOverviewView.cardGap
+        }
+        return rows
     }
 
     // Packs workspace sections into pages, greedily filling each page with
@@ -495,10 +609,7 @@ class SwitcherWindowController: NSObject {
     // preserved within each of the two groups.
     private func computeOverviewPages(_ workspaces: [WorkspaceSummary]) -> [[WorkspaceSummary]] {
         let sectionSpacing = WorkspacesOverviewView.cardGap  // must match the view's own VStack spacing
-        let panelPadding: CGFloat = 48     // 24pt top + bottom
-        let dotsReserve: CGFloat = 22      // room for the page dots, reserved whether or not they end up shown
-        let availableWidth = windowMaxWidth() - panelPadding
-        let availableHeight = windowMaxHeight() - panelPadding - dotsReserve
+        let (availableWidth, availableHeight) = overviewContentBudget()
 
         func pack(_ list: [WorkspaceSummary]) -> [[WorkspaceSummary]] {
             var pages: [[WorkspaceSummary]] = []
@@ -523,7 +634,54 @@ class SwitcherWindowController: NSObject {
 
         let nonEmpty = workspaces.filter { !$0.apps.isEmpty }
         let empty = workspaces.filter { $0.apps.isEmpty }
+
+        // The one exception to normal packing: a workspace with so many apps
+        // open (roughly 100 on a 14" MacBook screen) that its card ALONE is
+        // taller than the panel. Packing as usual would give it a page to
+        // itself and push every other busy workspace onto the next page,
+        // just because one of them got huge. Instead, every workspace that
+        // has something open goes on ONE page, still in alphabetical order,
+        // and that page scrolls (see overviewPageNeedsScroll). Empty
+        // workspaces still get their own normal page(s) after it, same rule
+        // as always: nothing empty mixed in with the ones that matter.
+        let anyOversized = nonEmpty.contains { estimatedOverviewSectionHeight($0, availableWidth: availableWidth) > availableHeight }
+        if anyOversized {
+            return [nonEmpty] + pack(empty)
+        }
         return pack(nonEmpty) + pack(empty)
+    }
+
+    // The width and height the overview's workspace cards actually get to
+    // use, once the panel's own padding and the page dots are taken out of
+    // windowMaxWidth()/windowMaxHeight(). Its own function rather than
+    // local constants inside computeOverviewPages, because
+    // overviewPageNeedsScroll (below) has to measure against the exact
+    // same budget. If the two ever used different numbers, a page could be
+    // packed as "fits" but drawn as "scrolls", or the other way round.
+    private func overviewContentBudget() -> (width: CGFloat, height: CGFloat) {
+        let panelPadding: CGFloat = 48     // 24pt top + bottom
+        let dotsReserve: CGFloat = 22      // room for the page dots, reserved whether or not they end up shown
+        return (windowMaxWidth() - panelPadding, windowMaxHeight() - panelPadding - dotsReserve)
+    }
+
+    // True only when the current overview page's cards, stacked with their
+    // gaps, are taller than the panel. Normal packing never builds a page
+    // like that (pack() starts a new page before going over), so in
+    // practice this is only ever the "one workspace is oversized, so every
+    // busy workspace shares one page" case from computeOverviewPages.
+    // WorkspacesOverviewView uses this to put just that page in a scroll
+    // view. Every normal page gets false and is drawn exactly as before.
+    // This only decides WHETHER a page scrolls, from the same estimate the
+    // packing uses. How FAR it can scroll is measured by the scroll view
+    // itself, never estimated here, so the last W/S press always lands
+    // exactly on the real bottom of the page.
+    private func overviewPageNeedsScroll() -> Bool {
+        let page = overviewPageSlice()
+        guard !page.isEmpty else { return false }
+        let budget = overviewContentBudget()
+        let cardsHeight = page.reduce(0) { $0 + estimatedOverviewSectionHeight($1, availableWidth: budget.width) }
+        let gapsHeight = CGFloat(page.count - 1) * WorkspacesOverviewView.cardGap
+        return cardsHeight + gapsHeight > budget.height
     }
 
     var rowHeight: CGFloat {
@@ -672,13 +830,24 @@ class SwitcherWindowController: NSObject {
             // its own — so the two panels feel like the same app, and
             // computeOverviewPages() (which already budgeted against these
             // same two numbers) and this stay in agreement.
-            let size = NSSize(width: windowMaxWidth(), height: windowMaxHeight())
+            //
+            // The one exception is the rare page that scrolls: its panel is
+            // made a little shorter (see overviewScrollPanelHeight) so the
+            // visible rows end cleanly instead of cutting one in half.
+            let scrollable = overviewPageNeedsScroll()
+            let scrollRows = scrollable ? overviewScrollRows() : []
+            let height = scrollable ? overviewScrollPanelHeight(rows: scrollRows) : windowMaxHeight()
+            let size = NSSize(width: windowMaxWidth(), height: height)
             let view = WorkspacesOverviewView(
                 workspaces: overviewPageSlice(),
                 pageIndex: overviewPageIndex,
                 totalPages: overviewTotalPages,
                 width: size.width,
-                height: size.height
+                height: size.height,
+                scrollable: scrollable,
+                scrollRequest: overviewScrollRequest,
+                scrollResetKey: overviewScrollResetKey,
+                scrollRows: scrollRows
             )
             return (AnyView(view), size)
         }

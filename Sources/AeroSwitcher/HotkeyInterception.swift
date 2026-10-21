@@ -20,7 +20,11 @@ class HotkeyManager {
     }
 
     func start() {
-        let eventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.flagsChanged.rawValue)
+        // keyUp is only needed for one thing: knowing when S/W is let go
+        // after holding it to glide through the overview (see the keyUp
+        // block in handle()). Every other key release passes straight
+        // through untouched.
+        let eventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue) | (1 << CGEventType.flagsChanged.rawValue)
         let selfPtr = Unmanaged.passUnretained(self).toOpaque()
 
         let callback: CGEventTapCallBack = { proxy, type, event, refcon in
@@ -118,9 +122,11 @@ class HotkeyManager {
             // same letters with a different modifier. Checking for Cmd
             // means this can only ever fire during a real Cmd+Tab session.
             if controller.isOpen && event.flags.contains(.maskCommand) {
-                // The overview is read-only, so only paging/confirm/cancel
-                // mean anything there — enterGreyedRow/exitGreyedRow (W/S)
-                // have nothing to do since there's no greyed row here, and
+                // The overview is read-only, so only paging, scrolling,
+                // confirm and cancel mean anything there. There's no greyed
+                // row here, so enterGreyedRow/exitGreyedRow (S/W) are reused
+                // to scroll the rare page that's taller than the panel (they
+                // do nothing on a normal page, see overviewScrollPressed).
                 // Page Up/Down (Q/E) aren't used either: paging reuses
                 // cycleNext/cyclePrevious (A/D) instead, the same physical
                 // keys Tab/Shift+Tab already page with (see
@@ -130,6 +136,18 @@ class HotkeyManager {
                     switch keyCode {
                     case keybinds.cyclePrevious: controller.overviewPageUp(); return nil
                     case keybinds.cycleNext: controller.overviewPageDown(); return nil
+                    // macOS key repeats (the extra keyDowns sent while a
+                    // key is held) are swallowed but ignored: holding is
+                    // handled by the glide engine itself, from the first
+                    // press until the keyUp, which is much smoother than
+                    // reacting to repeats that start after a delay and
+                    // then arrive in jerky steps.
+                    case keybinds.enterGreyedRow:
+                        if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { controller.overviewScrollPressed(direction: 1) }
+                        return nil
+                    case keybinds.exitGreyedRow:
+                        if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { controller.overviewScrollPressed(direction: -1) }
+                        return nil
                     case keybinds.confirm: controller.confirmSelection(); return nil
                     case keybinds.cancel: controller.cancelSession(); return nil
                     default: break
@@ -147,6 +165,19 @@ class HotkeyManager {
                     default: break
                     }
                 }
+            }
+        }
+
+        // Letting go of S/W while the overview is open ends a hold-to-glide
+        // (see overviewScrollReleased). Swallowed so the app underneath
+        // never sees a stray key release it never saw pressed. Any other
+        // key release, or any release while the overview isn't open, is
+        // passed through untouched below.
+        if type == .keyUp && controller.isOpen && controller.showingAllWorkspaces {
+            let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+            if keyCode == keybinds.enterGreyedRow || keyCode == keybinds.exitGreyedRow {
+                controller.overviewScrollReleased()
+                return nil
             }
         }
 
