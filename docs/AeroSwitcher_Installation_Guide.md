@@ -185,6 +185,16 @@ Log out and back in once (or restart) to confirm it actually launches on its own
 
 Everything above is a keybinding default. Both AeroSwitcher's own keys (`config.json`) and AeroSpace's own keys (`.aerospace.toml`) can be changed, see the **Keybindings** and **Config file** sections of the main documentation for how.
 
+## Keeping the repo's AeroSpace copies up to date
+
+The `aerospace/` folder in this repo holds copies of `~/.aerospace.toml` and the three scripts, not the live files. After you edit the real ones, run this from the repo folder to copy them in:
+
+```
+./sync-aerospace.sh
+```
+
+It only copies from your Mac into the repo, never the other way, so it can't break your running setup. It prints which files changed, and `git diff aerospace/` shows the exact lines. Commit them if they look right. If a live file is missing it skips that file instead of blanking out the repo copy, and it warns if your home folder isn't the `/Users/remitoshniwal` path the files have written into them.
+
 ## If something doesn't work
 
 - **Cmd+Tab does nothing** → check Input Monitoring permission is granted to AeroSwitcher.

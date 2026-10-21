@@ -84,9 +84,10 @@ on-window-detected = [
     { if = 'test %{app-bundle-path} ~= "Calendar.app"', run = ['move-node-to-workspace Core', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
     { if = 'test %{app-bundle-path} ~= "Claude.app"',   run = ['move-node-to-workspace Core', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
 
-    # School: Chrome, Word
+    # School: Chrome, Word, Powerpoint
     { if = 'test %{app-bundle-path} ~= "Google Chrome.app"',  run = ['move-node-to-workspace School', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
     { if = 'test %{app-bundle-path} ~= "Microsoft Word.app"', run = ['move-node-to-workspace School', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "Microsoft PowerPoint.app"', run = ['move-node-to-workspace School', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
 
     # Personal: Brave
     { if = 'test %{app-bundle-path} ~= "Brave Browser.app"', run = ['move-node-to-workspace Personal', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
@@ -98,9 +99,11 @@ on-window-detected = [
     # Dev: VS Code, Terminal
     { if = 'test %{app-bundle-path} ~= "Visual Studio Code.app"', run = ['move-node-to-workspace Dev', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
     { if = 'test %{app-bundle-path} ~= "Terminal.app"',           run = ['move-node-to-workspace Dev', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "GitHub Desktop.app"',     run = ['move-node-to-workspace Dev', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
 
-    # Gaming: Minecraft, Steam, Roblox
+    # Gaming: Minecraft, Steam, Roblox, Prism Launcher
     { if = 'test %{app-bundle-path} ~= "Minecraft"', run = ['move-node-to-workspace Gaming', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "Prism Launcher"', run = ['move-node-to-workspace Gaming', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
     { if = 'test %{app-bundle-path} ~= "Steam.app"', run = ['move-node-to-workspace Gaming', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
     { if = 'test %{app-bundle-path} ~= "Roblox"',    run = ['move-node-to-workspace Gaming', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
 
@@ -159,8 +162,8 @@ on-window-detected = [
     # Not actually how you switch day to day though — Cmd+Tab (AeroSwitcher)
     # is what you use for that, this is just AeroSpace's own native
     # cycling, kept for completeness.
-    alt-tab = 'focus right'
-    alt-shift-tab = 'focus left'
+    # alt-tab = 'focus right'
+    # alt-shift-tab = 'focus left'
 
     # Toggles between maximized (fills the screen) and a smaller,
     # centered size — see toggle-maximize.sh in the same
