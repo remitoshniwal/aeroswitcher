@@ -1,0 +1,199 @@
+# ~/.aerospace.toml
+# Custom setup: 3x3 key grid under the left hand (q w e / a s d / z x c),
+# workspaces named after the task groups so the menu bar shows real names.
+config-version = 2
+
+after-startup-command = []
+start-at-login = false
+
+# Reload automatically every time you save this file
+auto-reload-config = true
+
+enable-normalization-flatten-containers = true
+enable-normalization-opposite-orientation-for-nested-containers = true
+
+accordion-padding = 30
+default-root-container-layout = 'accordion'
+default-root-container-orientation = 'auto'
+
+on-focused-monitor-changed = ['move-mouse monitor-lazy-center']
+automatically-unhide-macos-hidden-apps = false
+
+# Only the workspaces you actually use stay "alive"
+persistent-workspaces = ["Core", "School", "Personal", "Creative", "Dev", "Gaming"]
+
+on-mode-changed = []
+focus-follows-mouse.enabled = false
+key-mapping.preset = 'qwerty'
+
+# One small log per workspace instead of one shared log for everything.
+# AeroSpace only hands this hook the window ID directly, not which
+# workspace it's in, so the nested `aerospace list-workspaces --focused`
+# call figures out which workspace's file to append to. Keeping each
+# workspace's history separate means switching a lot in one workspace can
+# never crowd an older, less-visited workspace's own recency order out.
+on-focus-changed = ['exec-and-forget /bin/sh -c "mkdir -p /tmp/aerospace-mru && echo $AEROSPACE_WINDOW_ID >> /tmp/aerospace-mru/$(aerospace list-workspaces --focused).log"']
+
+gaps.inner.horizontal = 8
+gaps.inner.vertical =   8
+gaps.outer.left =       8
+gaps.outer.bottom =     8
+gaps.outer.top =        8
+gaps.outer.right =      8
+
+# --------------------------------------------------------------------------
+# Auto-sort apps into workspaces the moment they open.
+#
+# Matched by app-bundle-path (the actual .app file on disk) instead of
+# app-bundle-id. Bundle IDs looked more "correct" at first, but Steam's
+# window is actually owned by a separate "Steam Helper" process with its
+# own different bundle ID, so a bundle-id rule for Steam silently never
+# matched. A bundle-path match doesn't have that problem — helper apps
+# live nested inside their parent's own folder (e.g. Steam Helper.app sits
+# inside Steam.app/Contents/Frameworks/), so matching "Steam.app" catches
+# both. It also sidesteps the fact that Safari assigns web apps like
+# WhatsApp a random ID that changes if you ever re-add them to the Dock —
+# the file name stays whatever you named it, so that's what we match on.
+#
+# Every line below was checked against your actual /Applications listing
+# to make sure nothing accidentally matches more than one app.
+#
+# Finder is intentionally NOT listed here. You use it across every task
+# group, so forcing it to one workspace would fight you. It'll just open on
+# whatever workspace you're currently on.
+# --------------------------------------------------------------------------
+# Every rule also does two more things after sorting the window:
+#   1. 'layout floating' — takes the window OUT of AeroSpace's tiling
+#      entirely. This matters a lot: AeroSpace continuously enforces the
+#      position/size of TILED windows and ignores anything else that
+#      tries to move them (confirmed straight from AeroSpace's own
+#      GitHub issue tracker) — that's exactly why a plain Option+click
+#      maximize didn't stick earlier. Floating windows are the opposite:
+#      AeroSpace just leaves them alone. Once floating, nothing about
+#      switching focus touches this window's size or position again,
+#      ever — which is what finally makes "always fills the screen,
+#      no flicker" actually possible.
+#   2. maximize.applescript — resizes the now-floating window to fill
+#      the screen. A real macOS window resize, nothing AeroSpace-specific,
+#      see ~/Library/Application Support/AeroSpace/maximize.applescript.
+on-window-detected = [
+    # Core: WhatsApp, Spotify, Obsidian, Calendar, Claude
+    { if = 'test %{app-bundle-path} ~= "Whatsapp.app"', run = ['move-node-to-workspace Core', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "Spotify.app"',  run = ['move-node-to-workspace Core', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "Obsidian.app"', run = ['move-node-to-workspace Core', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "Calendar.app"', run = ['move-node-to-workspace Core', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "Claude.app"',   run = ['move-node-to-workspace Core', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
+
+    # School: Chrome, Word
+    { if = 'test %{app-bundle-path} ~= "Google Chrome.app"',  run = ['move-node-to-workspace School', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "Microsoft Word.app"', run = ['move-node-to-workspace School', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
+
+    # Personal: Brave
+    { if = 'test %{app-bundle-path} ~= "Brave Browser.app"', run = ['move-node-to-workspace Personal', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
+
+    # Creative: Ableton Live, Affinity
+    { if = 'test %{app-bundle-path} ~= "Ableton Live"', run = ['move-node-to-workspace Creative', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "Affinity"',     run = ['move-node-to-workspace Creative', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
+
+    # Dev: VS Code, Terminal
+    { if = 'test %{app-bundle-path} ~= "Visual Studio Code.app"', run = ['move-node-to-workspace Dev', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "Terminal.app"',           run = ['move-node-to-workspace Dev', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
+
+    # Gaming: Minecraft, Steam, Roblox
+    { if = 'test %{app-bundle-path} ~= "Minecraft"', run = ['move-node-to-workspace Gaming', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "Steam.app"', run = ['move-node-to-workspace Gaming', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "Roblox"',    run = ['move-node-to-workspace Gaming', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
+
+    # Everything else (Finder, anything not listed above) — no workspace
+    # move, just floated and maximized wherever it opened. if = 'true'
+    # matches unconditionally (AeroSpace requires an explicit condition,
+    # a rule with no 'if' isn't allowed). AeroSpace stops checking
+    # further rules once one matches, and every app above is matched by
+    # exactly one specific rule, never two, so this only actually runs
+    # for windows none of those already caught.
+    { if = 'true', run = ['layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
+]
+
+[mode.main.binding]
+    # Not used — you have multiple windows per workspace, but you switch
+    # between them with Cmd+Tab (AeroSwitcher), not AeroSpace's own
+    # directional focus/move/layout commands, so none of these come up.
+    # alt-slash = 'layout tiles horizontal vertical'
+    # alt-comma = 'layout accordion horizontal vertical'
+
+    # alt-h = 'focus left'
+    # alt-j = 'focus down'
+    # alt-k = 'focus up'
+    # alt-l = 'focus right'
+
+    # alt-shift-h = 'move left'
+    # alt-shift-j = 'move down'
+    # alt-shift-k = 'move up'
+    # alt-shift-l = 'move right'
+
+    # alt-minus = 'resize smart -50'
+    # alt-equal = 'resize smart +50'
+
+    # Not used — no shortcut wanted for opening Terminal.
+    # alt-enter = '''exec-and-forget osascript -e \
+    # 'tell application "Terminal" to tell (do script) to activate' '''
+
+    # Workspace switching: 3x3 grid under your left hand
+    alt-q = 'workspace Core'
+    alt-w = 'workspace School'
+    alt-e = 'workspace Personal'
+    alt-a = 'workspace Creative'
+    alt-s = 'workspace Dev'
+    alt-d = 'workspace Gaming'
+
+    # Send the focused window to a workspace (use this for Finder, or
+    # anything that lands somewhere you didn't want)
+    alt-shift-q = 'move-node-to-workspace Core'
+    alt-shift-w = 'move-node-to-workspace School'
+    alt-shift-e = 'move-node-to-workspace Personal'
+    alt-shift-a = 'move-node-to-workspace Creative'
+    alt-shift-s = 'move-node-to-workspace Dev'
+    alt-shift-d = 'move-node-to-workspace Gaming'
+
+    # Tab cycles through apps in the current workspace, shift+tab goes back.
+    # Not actually how you switch day to day though — Cmd+Tab (AeroSwitcher)
+    # is what you use for that, this is just AeroSpace's own native
+    # cycling, kept for completeness.
+    alt-tab = 'focus right'
+    alt-shift-tab = 'focus left'
+
+    # Toggles between maximized (fills the screen) and a smaller,
+    # centered size — see toggle-maximize.sh in the same
+    # AeroSpace folder as the two .applescript files. Doesn't use
+    # AeroSpace's own 'fullscreen' command at all anymore. That command
+    # gets automatically un-applied by AeroSpace the instant you switch
+    # away from a window (confirmed, unavoidable, no config flag stops
+    # it), so anything trying to keep it "always fullscreen" has to
+    # react a moment after every single switch, and that reaction is
+    # what caused a visible flicker. This toggle only touches a plain
+    # macOS window resize on a FLOATING window (see on-window-detected,
+    # above) — AeroSpace ignores floating windows' size entirely, so
+    # there's nothing to react to, ever, on any kind of switch.
+    alt-f = 'exec-and-forget bash "/Users/remitoshniwal/Library/Application Support/AeroSpace/toggle-maximize.sh"'
+
+    # Not used — service mode (below) was for layout/window-management
+    # actions you said you don't use either.
+    # alt-shift-semicolon = 'mode service'
+
+# Not used — every action in here was about manually arranging multiple
+# tiled windows (untangling layouts, floating, joining windows) or closing
+# other windows. You have multiple windows per workspace, but you're not
+# manually tiling them, you just Cmd+Tab between them, so none of this
+# comes up.
+# Uncomment the whole block (and the alt-shift-semicolon line above that
+# enters it) if that ever changes.
+# [mode.service.binding]
+#     esc = ['reload-config', 'mode main']
+#     r = ['flatten-workspace-tree', 'mode main']
+#     f = ['layout floating tiling', 'mode main']
+#     backspace = ['close-all-windows-but-current', 'mode main']
+#
+#     alt-shift-h = ['join-with left', 'mode main']
+#     alt-shift-j = ['join-with down', 'mode main']
+#     alt-shift-k = ['join-with up', 'mode main']
+#     alt-shift-l = ['join-with right', 'mode main']
