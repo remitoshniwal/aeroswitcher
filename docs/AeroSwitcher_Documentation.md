@@ -8,7 +8,22 @@ It's a Swift Package Manager project, wrapped into a real `.app` bundle so macOS
 
 ## How it's put together
 
-The whole app lives in one file, `main.swift`. There's no separate UI framework project, no storyboard, just:
+The app's code lives in `Sources/AeroSwitcher/`, one file per part of the app:
+
+| File | What's in it |
+|---|---|
+| `main.swift` | Start-up: the order things load in at launch, and starting the app |
+| `AeroSpaceBridge.swift` | Every call out to the `aerospace` command line tool (list windows, focus a window, current workspace) |
+| `ThumbnailCapture.swift` | Taking the window screenshots |
+| `DataModel.swift` | The basic types (a thumbnail, a launcher app) and the Finder/Terminal "new window" scripts |
+| `Config.swift` | Reading `config.json`, launcher tiles, custom icons, homeless apps, launching apps |
+| `Views.swift` | Everything you see: the switcher panel, its cards, and the Cmd+\` overview |
+| `MRUTracking.swift` | Recently-used order, and remembering which workspace each app was last in |
+| `WindowController.swift` | The panel's brain: paging, selection, showing and hiding it, switching windows |
+| `Keybinds.swift` | Turning key names from `config.json` into real key codes |
+| `HotkeyInterception.swift` | Catching Cmd+Tab before macOS sees it |
+
+They all build into one app together, so code in one file can use things from another without any extra setup. There's no separate UI framework project, no storyboard, just:
 
 - Cocoa and AppKit for the low level system hooks (intercepting Cmd+Tab, creating a floating window)
 - SwiftUI for drawing the actual panel of thumbnails
@@ -165,7 +180,7 @@ It has four sections:
 }
 ```
 
-**`keybinds`**: each value is the name of a key, lowercase. Letters (`"a"`–`"z"`), digits, and a few named keys (`"space"`, `"escape"`, `"return"`, `"tab"`, `"delete"`, `"up"`, `"down"`, `"left"`, `"right"`) are recognized, that list lives in `keyCode(forName:)` in `main.swift` if you ever want to see or extend it. Tab itself can't be reassigned, it's permanently what opens the switcher. Careful with combinations macOS itself already reserves system-wide (Space for Spotlight is the one that bit the original default here) — those will keep doing their system behavior no matter what this file says, since AeroSwitcher can't override the OS's own reserved shortcuts.
+**`keybinds`**: each value is the name of a key, lowercase. Letters (`"a"`–`"z"`), digits, and a few named keys (`"space"`, `"escape"`, `"return"`, `"tab"`, `"delete"`, `"up"`, `"down"`, `"left"`, `"right"`) are recognized, that list lives in `keyCode(forName:)` in `Keybinds.swift` if you ever want to see or extend it. Tab itself can't be reassigned, it's permanently what opens the switcher. Careful with combinations macOS itself already reserves system-wide (Space for Spotlight is the one that bit the original default here) — those will keep doing their system behavior no matter what this file says, since AeroSwitcher can't override the OS's own reserved shortcuts.
 
 **`workspaces`**: one array per AeroSpace workspace name, each entry a launcher tile:
 - `name` — what's shown under the grayed tile
@@ -230,7 +245,7 @@ This part isn't AeroSwitcher code at all, it's entirely `~/.aerospace.toml` plus
 - **Spotify (and similar DRM-protected apps)** will always show a static screenshot, never a live thumbnail. This is a macOS/hardware limitation, not something fixable in this app.
 - **The `"workspaces"` list in `~/Library/Application Support/AeroSwitcher/config.json` is a manual copy** of the workspace groupings in `aerospace.toml`. The two can drift apart if only one gets updated.
 - **No vertical scrolling within a page.** If a single page somehow still ends up too tall (extremely unlikely at normal window counts, since `maxRows` already caps it), there's currently no vertical scroll as a fallback, only pagination.
-- **A deprecation warning on every build, and that's expected.** `build.sh` will print a warning about `fullPath(forApplication:)` being deprecated, pointing at `resolvedAppIcon` in `main.swift` (the function that finds a QUIT app's real icon by name, for the greyed launcher row's automatic icons). This is intentional, not a mistake left behind: Apple's suggested replacement needs a bundle identifier, but config.json only ever has app names/paths (`match`/`open`), never bundle identifiers, so there's no non-deprecated API that does the same name-based lookup. The build still succeeds and the app works normally, this warning is cosmetic. The only way to avoid it entirely would be replacing this one lookup with a manual scan of `/Applications`, `/System/Applications`, and `~/Applications` instead of asking macOS directly, which trades a clean build log for missing apps installed in less common locations, judged not worth it.
+- **A deprecation warning on every build, and that's expected.** `build.sh` will print a warning about `fullPath(forApplication:)` being deprecated, pointing at `resolvedAppIcon` in `Config.swift` (the function that finds a QUIT app's real icon by name, for the greyed launcher row's automatic icons). This is intentional, not a mistake left behind: Apple's suggested replacement needs a bundle identifier, but config.json only ever has app names/paths (`match`/`open`), never bundle identifiers, so there's no non-deprecated API that does the same name-based lookup. The build still succeeds and the app works normally, this warning is cosmetic. The only way to avoid it entirely would be replacing this one lookup with a manual scan of `/Applications`, `/System/Applications`, and `~/Applications` instead of asking macOS directly, which trades a clean build log for missing apps installed in less common locations, judged not worth it.
 
 ## Permissions this app needs
 

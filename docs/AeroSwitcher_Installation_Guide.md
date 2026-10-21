@@ -109,10 +109,19 @@ AeroSwitcher/
 ├── build.sh
 └── Sources/
     └── AeroSwitcher/
-        └── main.swift
+        ├── main.swift
+        ├── AeroSpaceBridge.swift
+        ├── ThumbnailCapture.swift
+        ├── DataModel.swift
+        ├── Config.swift
+        ├── Views.swift
+        ├── MRUTracking.swift
+        ├── WindowController.swift
+        ├── Keybinds.swift
+        └── HotkeyInterception.swift
 ```
 
-`main.swift` specifically has to sit inside `Sources/AeroSwitcher/`, not next to `Package.swift`, that's just how Swift Package Manager finds source files (the `path:` line inside `Package.swift` points there).
+The `.swift` files specifically have to sit inside `Sources/AeroSwitcher/`, not next to `Package.swift`, that's just how Swift Package Manager finds source files (the `path:` line inside `Package.swift` points there). Every `.swift` file in that folder gets built into the app automatically, there's no list of them to keep up to date.
 
 **5c. Build it.**
 
