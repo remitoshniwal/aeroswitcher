@@ -16,9 +16,12 @@ mkdir -p "$MARKER_DIR"
 if [ -f "$MARKER" ]; then
     # currently restored/smaller -> maximize it, clear the marker
     rm -f "$MARKER"
-    osascript "$SCRIPT_DIR/maximize.applescript"
+    # "force" skips maximize.applescript's dialog check, alt-f is always
+    # your own choice. $ID tells it exactly which window to resize (see the
+    # comment at the top of maximize.applescript)
+    osascript "$SCRIPT_DIR/maximize.applescript" force "$ID"
 else
     # currently maximized -> restore it, remember that
     touch "$MARKER"
-    osascript "$SCRIPT_DIR/restore.applescript"
+    osascript "$SCRIPT_DIR/restore.applescript" "$ID"
 fi
