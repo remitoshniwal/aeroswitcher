@@ -157,7 +157,7 @@ Cmd+\` isn't in the config file's `keybinds` section, unlike everything else, it
 
 ## Menu bar icon
 
-AeroSwitcher puts one item in the menu bar: the name of the workspace you're in (for example `Core`). It's meant to replace AeroSpace's own icon, so you only need one. To hide AeroSpace's, go to **System Settings > Menu Bar**, scroll to **Allow in the Menu Bar**, and switch AeroSpace off. AeroSpace keeps running, only its icon goes away. AeroSpace itself has no setting for this, and AeroSwitcher never changes AeroSpace.
+AeroSwitcher puts one item in the menu bar: the name of the workspace you're in (for example `Core`). It does everything AeroSpace's own icon is used for day to day, but **AeroSpace's icon can't be hidden yet**, so for now both show. Tested on macOS 26.5 with AeroSpace 0.21.3: switching AeroSpace off in **System Settings > Menu Bar > Allow in the Menu Bar** makes AeroSpace quit on the spot (macOS tells it its icon was hidden and it reacts by quitting, it's not a crash), and when AeroSpace is opened again its icon comes back and the switch is on again. If that happens to you, just open AeroSpace again. AeroSpace itself has no setting for hiding its icon, and AeroSwitcher never changes AeroSpace.
 
 What the bar shows:
 - The focused workspace name. If a binding mode other than `main` is active, its name comes first, like `(SERVICE) Core`.

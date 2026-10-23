@@ -179,7 +179,7 @@ Open `/Applications/AeroSwitcher.app`, click its workspace name in the menu bar,
 
 That's it, no separate background service needed. It runs with no Dock icon (this is intentional, set via `LSUIElement` in its `Info.plist`) and nothing on screen except its menu bar item until you press Cmd+Tab.
 
-**One icon instead of two:** AeroSwitcher's menu bar item does everything AeroSpace's icon does that you'd use day to day. To hide AeroSpace's icon: **System Settings > Menu Bar**, scroll to **Allow in the Menu Bar**, switch AeroSpace off. AeroSpace keeps running.
+**About AeroSpace's own icon:** AeroSwitcher's menu bar item does everything AeroSpace's icon does that you'd use day to day, but AeroSpace's icon can't be hidden yet. Don't switch AeroSpace off in **System Settings > Menu Bar > Allow in the Menu Bar**: AeroSpace quits when you do, and its icon comes back when you reopen it.
 
 Log out and back in once (or restart) to confirm it actually launches on its own before you stop thinking about it.
 
