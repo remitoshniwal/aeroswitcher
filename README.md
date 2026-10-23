@@ -144,3 +144,7 @@ If Cmd+Tab stops responding or thumbnails go blank after a rebuild, check the tw
 ## Credits
 
 Built on top of [AeroSpace](https://github.com/nikitabobko/AeroSpace) by Nikita Bobko, which does all the actual window management.
+
+## License
+
+MIT, see [LICENSE](LICENSE). You can use, change and share it, as long as the copyright notice comes along.
