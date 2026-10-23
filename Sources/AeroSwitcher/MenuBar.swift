@@ -9,9 +9,11 @@ import ServiceManagement
 // open the config) plus AeroSwitcher's own things (config.json, permission
 // status, launch at login, About, Quit).
 //
-// To get rid of AeroSpace's icon, use System Settings > Menu Bar > "Allow in
-// the Menu Bar" and switch AeroSpace off there. AeroSpace itself has no
-// setting for it, and this app never changes AeroSpace.
+// AeroSpace's own icon can be hidden with "Hide AeroSpace's icon" in this
+// menu (see "Hiding AeroSpace's icon" below for how). Do NOT use System
+// Settings > Menu Bar > "Allow in the Menu Bar" for it, or Cmd-drag it out
+// of the bar: AeroSpace quits when its icon is removed (tested), and turns
+// the icon back on next time it starts.
 //
 // How it stays up to date:
 //   - The workspace name comes from AeroSpaceEventStream (AeroSpaceBridge.swift),
@@ -49,6 +51,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             MainActor.assumeIsolated {
                 self?.workspaceName = name
                 self?.updateBar()
+                // So the menu already has the right tick and apps next
+                // time it opens.
+                self?.refreshSnapshot()
             }
         }
         stream.onMode = { [weak self] mode in
@@ -56,6 +61,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                 self?.aerospaceEnabled = mode != nil
                 if let mode { self?.mode = mode }
                 self?.updateBar()
+                self?.refreshSnapshot()  // enabled/disabled changes what the menu shows
             }
         }
         stream.onConnection = { [weak self] connected in
@@ -63,8 +69,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                 guard let self else { return }
                 self.connected = connected
                 self.updateBar()
+                self.refreshSnapshot()
             }
         }
+        // Put the divider back if AeroSpace's icon was hidden last time.
+        if hideAeroSpaceIcon { showDivider(wide: true) }
+
         stream.start()
 
         // `pkill AeroSwitcher` (and Ctrl+C in Terminal) must also end the
@@ -120,31 +130,74 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     // MARK: The menu
 
-    // Called by macOS every time the menu is about to open. Rebuilt from
-    // scratch each time with fresh answers from AeroSpace. These commands
-    // each take roughly 25 ms and have a time limit (runAerospace), so a
-    // hung AeroSpace can't freeze anything.
+    // What the menu shows about AeroSpace, as last asked. The menu is
+    // built from this right away and never waits for AeroSpace itself.
+    //
+    // Why: the first version asked AeroSpace while the menu was opening,
+    // on the main thread, and in testing those questions sometimes took
+    // over 2 seconds (from Terminal they take 10-40 ms). Likely cause, not
+    // proven: while our menu opens, AeroSpace asks AeroSwitcher about its
+    // windows, which our busy main thread can't answer, so both wait on
+    // each other. Asking in the background avoids that either way.
+    private struct MenuSnapshot: Equatable {
+        var focused: String?
+        var names: [String] = []
+        var apps: [String: [String]] = [:]
+        var disabled = false
+        var reachable: Bool { focused != nil }
+    }
+    private var snapshot = MenuSnapshot()
+    private var refreshing = false
+
+    // Asks AeroSpace for everything the menu needs, off the main thread,
+    // then rebuilds the menu if anything changed (also while it's open,
+    // macOS updates an open menu in place).
+    private func refreshSnapshot() {
+        guard !refreshing else { return }
+        refreshing = true
+        Task.detached {
+            let focusedAnswer = runAerospace(["list-workspaces", "--focused"])
+            var fresh = MenuSnapshot()
+            fresh.focused = focusedAnswer.ok && !focusedAnswer.output.isEmpty ? focusedAnswer.output : nil
+            // A disabled AeroSpace refuses every command except `enable`,
+            // and says so. That's not "can't reach it", the Enable item
+            // must stay usable.
+            fresh.disabled = fresh.focused == nil && focusedAnswer.output.contains("disabled")
+            if fresh.focused != nil {
+                fresh.names = runAerospace(["list-workspaces", "--all"]).output
+                    .split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                fresh.apps = getAppNamesByWorkspace()
+            }
+            let result = fresh
+            await MainActor.run {
+                self.refreshing = false
+                guard result != self.snapshot else { return }
+                self.snapshot = result
+                if let menu = self.statusItem.menu { self.buildMenu(menu) }
+            }
+        }
+    }
+
+    // Called by macOS every time the menu is about to open: shows what's
+    // known right away, and asks AeroSpace for fresh data on the side.
     func menuNeedsUpdate(_ menu: NSMenu) {
         guard menu === statusItem.menu else { return }
+        buildMenu(menu)
+        refreshSnapshot()
+    }
+
+    private func buildMenu(_ menu: NSMenu) {
         menu.removeAllItems()
         menu.autoenablesItems = false  // so an item set to disabled below stays disabled
 
-        // runAerospace (not the older helpers) so each question has a time
-        // limit. A failed "which workspace is focused" means AeroSpace
-        // isn't answering.
-        let focusedAnswer = runAerospace(["list-workspaces", "--focused"])
-        let focused = focusedAnswer.ok && !focusedAnswer.output.isEmpty ? focusedAnswer.output : nil
-        // A disabled AeroSpace refuses every command except `enable`, and
-        // says so. That's not "can't reach it", the Enable item must stay usable.
-        let disabled = focused == nil && focusedAnswer.output.contains("disabled")
-        let allNames = runAerospace(["list-workspaces", "--all"]).output
-            .split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        if let focused { workspaceName = focused }
-        let reachable = focused != nil
+        let focused = snapshot.focused
+        let allNames = snapshot.names
+        let disabled = snapshot.disabled
+        let reachable = snapshot.reachable
 
         if reachable {
             menu.addItem(NSMenuItem.sectionHeader(title: "Workspaces"))
-            let apps = getAppNamesByWorkspace()
+            let apps = snapshot.apps
             for name in allNames {
                 let item = NSMenuItem(title: name, action: #selector(workspaceClicked(_:)), keyEquivalent: "")
                 item.target = self
@@ -179,6 +232,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let login = item("Launch at login", #selector(launchAtLoginClicked))
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(login)
+        let hide = item("Hide AeroSpace's icon", #selector(hideAeroSpaceIconClicked))
+        hide.state = hideAeroSpaceIcon ? .on : .off
+        menu.addItem(hide)
         menu.addItem(item("About AeroSwitcher", #selector(aboutClicked)))
         menu.addItem(item("Quit AeroSwitcher", #selector(quitClicked)))
     }
@@ -338,6 +394,108 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         alert.informativeText = text
         NSApp.activate(ignoringOtherApps: true)
         alert.runModal()
+    }
+
+    // MARK: Hiding AeroSpace's icon
+    //
+    // AeroSpace's icon can't be switched off: AeroSpace quits the moment
+    // macOS tells it its icon was removed (System Settings > Menu Bar, or
+    // Cmd-dragging it out of the bar), and turns the icon back on when it
+    // starts again. So instead it gets pushed off the screen, the same
+    // trick menu bar tidying apps like Ice and Bartender use:
+    //
+    //   [AeroSpace's icon] [divider] [AeroSwitcher's icon] [other icons...]
+    //
+    // The divider is a second, invisible icon of AeroSwitcher's own that is
+    // 3000 points wide. Menu bar icons are laid out from the right, so
+    // everything on its left ends up far off the left edge of the screen.
+    // AeroSpace still has its icon (macOS never tells it anything changed),
+    // it just can't be seen. Tested on macOS 26.5: AeroSpace kept running
+    // and switching workspaces with its icon off screen.
+    //
+    // Catch: ANY icon to the left of AeroSwitcher's own gets hidden this
+    // way, not just AeroSpace's. Cmd-drag icons you want to see to the
+    // right of AeroSwitcher's icon (while the divider shows as │).
+    //
+    // AeroSwitcher can't see which icon is AeroSpace's (on macOS 26 every
+    // menu bar icon belongs to Control Center, and finding out would need
+    // the Accessibility permission). So when you turn this on, the divider
+    // first shows as a thin │ and you check, or drag, AeroSpace's icon to
+    // its left. macOS remembers icon positions, so that's a one-time step.
+    //
+    // The on/off choice is stored in AeroSwitcher's own preferences, not in
+    // config.json (a menu tick writing to your hand-edited file could mess
+    // up its formatting). The Phase 9 settings window can move it later.
+
+    private var divider: NSStatusItem?
+    private let hideAeroSpaceIconKey = "HideAeroSpaceIcon"
+
+    private var hideAeroSpaceIcon: Bool {
+        get { UserDefaults.standard.bool(forKey: hideAeroSpaceIconKey) }
+        set { UserDefaults.standard.set(newValue, forKey: hideAeroSpaceIconKey) }
+    }
+
+    // wide = hiding (3000 points, no text). Not wide = the thin │ shown
+    // while you arrange icons.
+    private func showDivider(wide: Bool) {
+        if divider == nil {
+            // macOS saves each icon's place as a number under "NSStatusItem
+            // Preferred Position <name>", bigger means further left. The
+            // first time, place the divider just left of AeroSwitcher's
+            // icon by giving it a number one bigger. After that macOS keeps
+            // whatever place it ends up in.
+            let defaults = UserDefaults.standard
+            let dividerKey = "NSStatusItem Preferred Position AeroSwitcherDivider"
+            let mainKey = "NSStatusItem Preferred Position AeroSwitcher"
+            if defaults.object(forKey: dividerKey) == nil, defaults.object(forKey: mainKey) != nil {
+                defaults.set(defaults.double(forKey: mainKey) + 1, forKey: dividerKey)
+            }
+            let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            item.autosaveName = "AeroSwitcherDivider"
+            divider = item
+        }
+        divider?.length = wide ? 3000 : NSStatusItem.variableLength
+        divider?.button?.title = wide ? "" : "│"
+        print("Divider: \(wide ? "wide, hiding the icons on its left" : "showing as │")")
+    }
+
+    private func removeDivider() {
+        if let divider { NSStatusBar.system.removeStatusItem(divider) }
+        divider = nil
+        print("Divider: removed, AeroSpace's icon is visible again")
+    }
+
+    @objc private func hideAeroSpaceIconClicked() {
+        if hideAeroSpaceIcon {
+            print("Menu: show AeroSpace's icon again")
+            hideAeroSpaceIcon = false
+            removeDivider()
+            return
+        }
+        print("Menu: hide AeroSpace's icon (arranging)")
+        showDivider(wide: false)
+        let alert = NSAlert()
+        alert.messageText = "Hide AeroSpace's icon"
+        alert.informativeText = """
+            A thin │ is now next to AeroSwitcher's workspace name in the menu bar. \
+            Everything to the LEFT of the │ will be hidden.
+
+            AeroSpace's workspace name has to be on the left of the │. If it isn't, \
+            hold Cmd and drag it there. Keep it inside the menu bar: dragging it \
+            out of the bar quits AeroSpace.
+
+            Any other icon on the left of the │ gets hidden too, Cmd-drag it to the \
+            right of AeroSwitcher's name to keep it.
+            """
+        alert.addButton(withTitle: "Hide")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            hideAeroSpaceIcon = true
+            showDivider(wide: true)
+        } else {
+            removeDivider()
+        }
     }
 
     // MARK: About, Quit

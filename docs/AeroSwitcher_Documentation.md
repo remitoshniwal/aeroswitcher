@@ -157,7 +157,7 @@ Cmd+\` isn't in the config file's `keybinds` section, unlike everything else, it
 
 ## Menu bar icon
 
-AeroSwitcher puts one item in the menu bar: the name of the workspace you're in (for example `Core`). It does everything AeroSpace's own icon is used for day to day, but **AeroSpace's icon can't be hidden yet**, so for now both show. Tested on macOS 26.5 with AeroSpace 0.21.3: switching AeroSpace off in **System Settings > Menu Bar > Allow in the Menu Bar** makes AeroSpace quit on the spot (macOS tells it its icon was hidden and it reacts by quitting, it's not a crash), and when AeroSpace is opened again its icon comes back and the switch is on again. If that happens to you, just open AeroSpace again. AeroSpace itself has no setting for hiding its icon, and AeroSwitcher never changes AeroSpace.
+AeroSwitcher puts one item in the menu bar: the name of the workspace you're in (for example `Core`). It does everything AeroSpace's own icon is used for day to day, and **Hide AeroSpace's icon** in its menu gets rid of AeroSpace's, so only one is left (see below).
 
 What the bar shows:
 - The focused workspace name. If a binding mode other than `main` is active, its name comes first, like `(SERVICE) Core`.
@@ -172,11 +172,24 @@ The menu, top to bottom:
 - **Open config.json**: opens AeroSwitcher's own config. A settings window is planned to replace this.
 - **Permissions**: a tick or a cross for Input Monitoring, Screen Recording, and whether AeroSpace is running. Clicking a cross opens the right page in System Settings. These checks only look, they never pop up a permission request.
 - **Launch at login**: see **Packaging it as your daily-use app**, below.
+- **Hide AeroSpace's icon**: see below.
 - **About AeroSwitcher**, **Quit AeroSwitcher**. (Before this menu existed, quitting needed `pkill AeroSwitcher` in Terminal.)
 
 **How the name stays up to date.** AeroSwitcher keeps one `aerospace subscribe focused-workspace-changed mode-changed` running in the background (`AeroSpaceEventStream` in `AeroSpaceBridge.swift`). AeroSpace prints a line the moment you switch, so the name changes instantly, nothing is checked over and over, and nothing needs adding to `.aerospace.toml`. If AeroSpace quits or restarts, that connection ends; AeroSwitcher tries again every 2 seconds and gets the current workspace again on reconnect. An AeroSpace too old to have `subscribe` gets a check once a second instead. The menu itself asks AeroSpace fresh every time it opens, with a time limit on each question, so a hung AeroSpace can't freeze Cmd+Tab.
 
 **How it knows AeroSpace is disabled.** There's no command to ask. But AeroSpace announces it on the same event connection: disabling sends a `mode-changed` event with no mode at all, enabling sends mode `main` again (found by testing, AeroSpace 0.21.3). So the pause symbol is right even if something else disables AeroSpace.
+
+**Hiding AeroSpace's icon.** AeroSpace's icon can't simply be switched off. Tested on macOS 26.5 with AeroSpace 0.21.3: switching AeroSpace off in **System Settings > Menu Bar > Allow in the Menu Bar**, or Cmd-dragging its icon out of the menu bar, makes AeroSpace quit on the spot (macOS tells it its icon was removed and it reacts by quitting, it's not a crash), and when it's opened again its icon is back and the switch is on again. So don't use either of those.
+
+Instead, **Hide AeroSpace's icon** pushes it off the screen, the same trick menu bar tidying apps like Ice and Bartender use. AeroSwitcher adds a second, invisible item of its own right next to its workspace name, 3000 points wide. Menu bar items are laid out from the right, so everything to the left of that divider ends up far past the left edge of the screen. AeroSpace still has its icon and is never told anything, so it keeps running normally.
+
+- Turning it on first shows the divider as a thin **│** with a short explanation. AeroSpace's workspace name must be on the left of the │ (it usually already is). If it isn't, hold Cmd and drag it there, staying inside the menu bar. Then click **Hide**. macOS remembers where icons are, so this is a one-time step.
+- **Everything to the left of AeroSwitcher's name is hidden, not just AeroSpace's icon.** To keep another app's icon visible, Cmd-drag it to the right of AeroSwitcher's name (turn the option off and on again to see the │ while you do).
+- Turning it off removes the divider and AeroSpace's icon is back at once. If AeroSwitcher quits, the divider goes with it, so AeroSpace's icon shows again and you're never left without one.
+- The choice is stored in AeroSwitcher's own preferences (`HideAeroSpaceIcon` in `com.aeroswitcher.app`), not in config.json.
+- The divider stretches over the empty part of the menu bar, but app menus (File, Edit, ...) still open normally. Clicking the empty part does nothing.
+
+**The menu never waits for AeroSpace.** It opens instantly with the last known workspaces and refreshes them in the background (an open menu updates itself). Asking AeroSpace while the menu was opening sometimes took over 2 seconds in testing.
 
 **Only one copy at a time.** A second AeroSwitcher that starts while one is running quits right away, so two can never both catch Cmd+Tab or show two icons. It waits up to 3 seconds first, so `pkill AeroSwitcher; open AeroSwitcher.app` still works. A copy started with `AEROSWITCHER_CONFIG_DIR` (for testing) skips this check.
 

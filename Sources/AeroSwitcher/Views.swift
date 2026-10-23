@@ -773,7 +773,15 @@ final class ConfigProblemsWindow {
                 summary: "Everything else was applied. Each item below fell back to its default.",
                 lines: report.warnings))
         }
-        if let aerospace, !aerospace.ok {
+        // The aerospace command says "Can't connect to AeroSpace server"
+        // when AeroSpace isn't running at all. That's not a config problem,
+        // so it gets its own title instead of a misleading one.
+        if let aerospace, !aerospace.ok, aerospace.output.contains("Can't connect to AeroSpace server") {
+            sections.append(ConfigProblemSection(
+                title: "AeroSpace isn't running",
+                summary: "AeroSwitcher couldn't reach AeroSpace to reload its config. Open AeroSpace, then reload again.",
+                lines: [aerospace.output]))
+        } else if let aerospace, !aerospace.ok {
             sections.append(ConfigProblemSection(
                 title: "AeroSpace's config has problems",
                 summary: "This is ~/.aerospace.toml, reloaded together with config.json. AeroSpace keeps its previous config while there are errors.",
