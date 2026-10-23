@@ -250,3 +250,257 @@ func reloadAeroSpaceConfig() -> AeroSpaceReloadResult {
     print("aerospace reload-config: exit \(process.terminationStatus)\(output.isEmpty ? "" : ", \(output)")")
     return AeroSpaceReloadResult(ok: process.terminationStatus == 0, output: output)
 }
+
+// MARK: - Menu bar support (Phase 8)
+//
+// Everything below is what the menu bar icon (MenuBar.swift) needs from
+// AeroSpace. Same rule as the rest of this file: AeroSpace is only ever
+// talked to through its command line.
+
+// Runs one aerospace command and waits for it, but never longer than
+// `timeout` seconds. The older helpers above wait forever, which is fine
+// for them, but the menu is built on the main thread, the same thread that
+// answers Cmd+Tab. If AeroSpace ever hangs, waiting forever there would
+// freeze Cmd+Tab for the whole Mac (macOS switches an event tap off when it
+// is too slow). A command that takes too long is killed and counts as
+// failed instead.
+func runAerospace(_ arguments: [String], timeout: TimeInterval = 2) -> (ok: Bool, output: String) {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: aerospacePath)
+    process.arguments = arguments
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = pipe
+    let exited = DispatchSemaphore(value: 0)
+    process.terminationHandler = { _ in exited.signal() }
+    do {
+        try process.run()
+    } catch {
+        return (false, "Couldn't run \(aerospacePath): \(error.localizedDescription)")
+    }
+    // The output is read on the side so a command that prints a lot can
+    // never fill the pipe and get stuck waiting for us to read it.
+    var collected = Data()
+    let finishedReading = DispatchSemaphore(value: 0)
+    DispatchQueue.global().async {
+        collected = pipe.fileHandleForReading.readDataToEndOfFile()
+        finishedReading.signal()
+    }
+    if exited.wait(timeout: .now() + timeout) == .timedOut {
+        process.terminate()
+        print("aerospace \(arguments.joined(separator: " ")) took longer than \(timeout)s and was stopped.")
+        return (false, "timed out")
+    }
+    _ = finishedReading.wait(timeout: .now() + 1)
+    let output = (String(data: collected, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    return (process.terminationStatus == 0, output)
+}
+
+// Which apps have windows in each workspace, for the menu's workspace rows
+// ("Core    Chrome, Notion"). Names only, sorted and without repeats, like
+// AeroSpace's own menu. A workspace with nothing open is just missing from
+// the result.
+func getAppNamesByWorkspace() -> [String: [String]] {
+    let result = runAerospace(["list-windows", "--all", "--format", "%{workspace}|%{app-name}"])
+    guard result.ok else { return [:] }
+    var names: [String: Set<String>] = [:]
+    for line in result.output.split(separator: "\n") {
+        let parts = line.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+        guard parts.count == 2, !parts[0].isEmpty else { continue }
+        names[parts[0], default: []].insert(parts[1])
+    }
+    return names.mapValues { $0.sorted() }
+}
+
+// The real path of AeroSpace's config file, asked of AeroSpace itself
+// (it knows whether it found ~/.aerospace.toml or the XDG folder one).
+func getAeroSpaceConfigPath() -> String? {
+    let result = runAerospace(["config", "--config-path"])
+    return result.ok && !result.output.isEmpty ? result.output : nil
+}
+
+// Both lines of `aerospace --version`: the command line tool's version and
+// the running app's. Shown in the About window.
+func getAeroSpaceVersionText() -> String {
+    let result = runAerospace(["--version"])
+    return result.ok ? result.output : "AeroSpace isn't reachable"
+}
+
+func switchToWorkspace(_ name: String) {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: aerospacePath)
+    process.arguments = ["workspace", name]
+    try? process.run()
+}
+
+// `aerospace enable on` / `off`. AeroSpace can't be asked whether it is
+// enabled right now (there is no command for that), but it announces every
+// change on the event stream, see AeroSpaceEventStream.onMode.
+func setAeroSpaceEnabled(_ enabled: Bool) -> (ok: Bool, output: String) {
+    runAerospace(["enable", enabled ? "on" : "off"], timeout: 5)
+}
+
+// Only AeroSpace versions from a while back have `aerospace subscribe`.
+// `--help` is answered by the command line tool itself, so this works even
+// when AeroSpace isn't running, and an old version that doesn't know the
+// command says so with a non-zero exit code.
+func aerospaceSupportsSubscribe() -> Bool {
+    runAerospace(["subscribe", "--help"]).ok
+}
+
+// A live connection to AeroSpace's event stream: `aerospace subscribe`
+// stays running and prints one line of JSON the moment something happens,
+// for example {"_event":"focused-workspace-changed","workspace":"Dev",...}.
+// This is how the menu bar icon learns about workspace switches, instead
+// of asking over and over. Nothing runs while nothing happens, and there
+// is nothing to add to .aerospace.toml.
+//
+// Safety nets, because this connection can break:
+//   - If AeroSpace quits or restarts, the `aerospace subscribe` process
+//     ends. A new one is started every 2 seconds until it stays up, and
+//     AeroSpace sends the current workspace again on every new connection,
+//     so a restart can't leave the icon showing an old workspace.
+//   - An AeroSpace too old for `subscribe` gets a simple check once a
+//     second instead.
+//   - stop() ends the process when AeroSwitcher quits.
+//
+// (Marked @unchecked Sendable: it is only touched on the main thread, which
+// the compiler cannot see.) Everything here happens on the main thread, the reading thread hands
+// each chunk over before touching anything.
+final class AeroSpaceEventStream: @unchecked Sendable {
+    var onWorkspace: ((String) -> Void)?
+    // nil = AeroSpace is disabled. Found by testing: `aerospace enable off`
+    // makes AeroSpace send {"_event":"mode-changed"} with no mode at all,
+    // and `enable on` sends mode "main" again.
+    var onMode: ((String?) -> Void)?
+    // true = got a sign of life from AeroSpace, false = connection lost.
+    var onConnection: ((Bool) -> Void)?
+
+    private var wanted = false
+    private var process: Process?
+    private var pending = Data()
+    private var pollTimer: Timer?
+    private var pollSawWorkspace: String?
+    private var connected = false
+
+    func start() {
+        wanted = true
+        if aerospaceSupportsSubscribe() {
+            print("AeroSpace events: using `aerospace subscribe`.")
+            connect()
+        } else {
+            print("AeroSpace events: this AeroSpace has no `subscribe` command, checking the workspace once a second instead.")
+            startPolling()
+        }
+    }
+
+    func stop() {
+        wanted = false
+        pollTimer?.invalidate()
+        pollTimer = nil
+        let running = process
+        process = nil
+        running?.terminationHandler = nil
+        if running?.isRunning == true { running?.terminate() }
+    }
+
+    private func setConnected(_ value: Bool) {
+        guard connected != value else { return }
+        connected = value
+        print("AeroSpace events: \(value ? "connected" : "connection lost")")
+        onConnection?(value)
+    }
+
+    private func connect() {
+        guard wanted, process == nil else { return }
+        let child = Process()
+        child.executableURL = URL(fileURLWithPath: aerospacePath)
+        child.arguments = ["subscribe", "focused-workspace-changed", "mode-changed"]
+        let pipe = Pipe()
+        child.standardOutput = pipe
+        child.standardError = pipe
+        pending = Data()
+        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                handle.readabilityHandler = nil
+                return
+            }
+            DispatchQueue.main.async { self?.received(data, from: child) }
+        }
+        child.terminationHandler = { [weak self] finished in
+            DispatchQueue.main.async { self?.ended(finished) }
+        }
+        do {
+            try child.run()
+            process = child
+        } catch {
+            print("AeroSpace events: couldn't start `aerospace subscribe`: \(error.localizedDescription)")
+            scheduleReconnect()
+        }
+    }
+
+    private func received(_ data: Data, from child: Process) {
+        guard child === process else { return }  // late data from a connection that already ended
+        pending.append(data)
+        // A chunk can end in the middle of a line, only whole lines are used.
+        while let newline = pending.firstIndex(of: 0x0A) {
+            let lineData = pending.subdata(in: pending.startIndex..<newline)
+            pending.removeSubrange(pending.startIndex...newline)
+            guard let line = String(data: lineData, encoding: .utf8), !line.isEmpty else { continue }
+            handle(line: line)
+        }
+    }
+
+    private func handle(line: String) {
+        guard let json = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+              let event = json["_event"] as? String else {
+            print("AeroSpace events: `aerospace subscribe` said: \(line)")
+            return
+        }
+        print("AeroSpace event: \(line)")
+        setConnected(true)
+        switch event {
+        case "focused-workspace-changed":
+            if let workspace = json["workspace"] as? String { onWorkspace?(workspace) }
+        case "mode-changed":
+            onMode?(json["mode"] as? String)
+        default:
+            break
+        }
+    }
+
+    private func ended(_ finished: Process) {
+        guard finished === process else { return }
+        print("AeroSpace events: `aerospace subscribe` ended (exit \(finished.terminationStatus)).")
+        process = nil
+        setConnected(false)
+        scheduleReconnect()
+    }
+
+    private func scheduleReconnect() {
+        guard wanted else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.connect() }
+    }
+
+    // The fallback for an AeroSpace without `subscribe`.
+    private func startPolling() {
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            DispatchQueue.global().async {
+                let name = getCurrentWorkspaceName()
+                DispatchQueue.main.async { self?.polled(name) }
+            }
+        }
+        pollTimer?.fire()
+    }
+
+    private func polled(_ name: String?) {
+        guard wanted else { return }
+        setConnected(name != nil)
+        if name == nil { pollSawWorkspace = nil }  // after a break, report the workspace again
+        if let name, name != pollSawWorkspace {
+            pollSawWorkspace = name
+            onWorkspace?(name)
+        }
+    }
+}

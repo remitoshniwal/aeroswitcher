@@ -10,7 +10,8 @@ If you use AeroSpace workspaces to keep things apart (school in one, music in an
 - **Launcher tiles.** Apps you've assigned to a workspace but haven't opened yet show up as grey tiles, so you can launch them straight from the switcher.
 - **Cmd+\` overview.** A read-only view of every workspace and what's open in it.
 - **Left-hand keyboard controls.** Navigate the panel without leaving the Cmd key. All keys are configurable.
-- **Lightweight.** No Dock icon, no menu bar icon, and nothing on screen until you press Cmd+Tab. It only talks to AeroSpace through its command line tool and never changes AeroSpace itself.
+- **One menu bar icon.** Shows the workspace you're in and replaces AeroSpace's own icon: switch workspaces, enable or disable AeroSpace, reload both configs, check permissions, launch at login, quit. (Hide AeroSpace's icon in System Settings > Menu Bar.)
+- **Lightweight.** No Dock icon, and nothing else on screen until you press Cmd+Tab. It only talks to AeroSpace through its command line tool and never changes AeroSpace itself.
 
 ## Requirements
 
@@ -59,7 +60,7 @@ The first time you open it, macOS may say it can't verify the developer. Right-c
 
 Then quit and reopen AeroSwitcher, hold Cmd and press Tab. You should see your current workspace's windows.
 
-**6. Optional: start it at login.** In **System Settings > General > Login Items**, add `/Applications/AeroSwitcher.app` under "Open at Login".
+**6. Optional: start it at login.** Open `/Applications/AeroSwitcher.app` and tick **Launch at login** in its menu bar menu.
 
 ## Using it
 
@@ -120,7 +121,8 @@ aeroswitcher/
 │   ├── MRUTracking.swift            Most-recently-used order
 │   ├── WindowController.swift       Paging, selection, showing the panel, switching
 │   ├── Keybinds.swift               Key names to key codes
-│   └── HotkeyInterception.swift     Catching Cmd+Tab before macOS does
+│   ├── HotkeyInterception.swift     Catching Cmd+Tab before macOS does
+│   └── MenuBar.swift                The menu bar icon and its menu
 ├── aerospace/                       Optional AeroSpace config and full-screen scripts
 ├── sync-aerospace.sh                Copies the live AeroSpace files into aerospace/
 ├── check-drift.js                   Finds apps set up in .aerospace.toml but not config.json, or the reverse
@@ -133,7 +135,7 @@ aeroswitcher/
 
 ```bash
 ./build.sh                                     # build AeroSwitcher.app in this folder
-pkill AeroSwitcher                             # stop the running copy
+pkill AeroSwitcher                             # stop the running copy (or Quit in its menu)
 AeroSwitcher.app/Contents/MacOS/AeroSwitcher   # run it from Terminal to see its log output
 ```
 

@@ -8,6 +8,35 @@ import ScreenCaptureKit
 // buffering here means every print() appears the moment it runs.
 setvbuf(stdout, nil, _IOLBF, 0)
 
+// MARK: - One copy only
+//
+// Two AeroSwitchers at once would both swallow Cmd+Tab and both put an icon
+// in the menu bar. That can happen at login if the app is started both by a
+// hand-made Login Items entry and by the menu's "Launch at login". So a copy
+// that finds another one already running quits at once.
+//
+// It waits a moment first (up to 3 seconds) for the other one to go away,
+// because `pkill AeroSwitcher; open AeroSwitcher.app` starts the new copy
+// while the old one is still shutting down, and that must still work.
+// A test copy started with AEROSWITCHER_CONFIG_DIR (see Config.swift) skips
+// the check, that's the documented way to run a second one on purpose.
+if ProcessInfo.processInfo.environment["AEROSWITCHER_CONFIG_DIR"] == nil,
+   let bundleID = Bundle.main.bundleIdentifier {
+    func otherCopyRunning() -> Bool {
+        NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            .contains { $0.processIdentifier != getpid() && !$0.isTerminated }
+    }
+    var waited = 0.0
+    while otherCopyRunning() && waited < 3 {
+        Thread.sleep(forTimeInterval: 0.1)
+        waited += 0.1
+    }
+    if otherCopyRunning() {
+        print("Another AeroSwitcher is already running, quitting this copy.")
+        exit(0)
+    }
+}
+
 // MARK: - Start-up order
 //
 // This app used to be one big main.swift, and it's now split into one file
@@ -52,6 +81,7 @@ app.activate(ignoringOtherApps: true)
 
 var controller: SwitcherWindowController?
 var hotkeys: HotkeyManager?
+var menuBar: MenuBarController?
 
 Task { @MainActor in
     let c = SwitcherWindowController()
@@ -60,6 +90,9 @@ Task { @MainActor in
 
     hotkeys = HotkeyManager(controller: c)
     hotkeys?.start()
+
+    // The menu bar icon (workspace name and menu), see MenuBar.swift.
+    menuBar = MenuBarController()
 
     // From here on, saving config.json reloads it, and `pkill -HUP
     // AeroSwitcher` reloads it together with AeroSpace's config.

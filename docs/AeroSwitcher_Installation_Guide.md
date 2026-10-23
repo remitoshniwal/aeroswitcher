@@ -118,7 +118,8 @@ AeroSwitcher/
         ├── MRUTracking.swift
         ├── WindowController.swift
         ├── Keybinds.swift
-        └── HotkeyInterception.swift
+        ├── HotkeyInterception.swift
+        └── MenuBar.swift
 ```
 
 The `.swift` files specifically have to sit inside `Sources/AeroSwitcher/`, not next to `Package.swift`, that's just how Swift Package Manager finds source files (the `path:` line inside `Package.swift` points there). Every `.swift` file in that folder gets built into the app automatically, there's no list of them to keep up to date.
@@ -162,7 +163,7 @@ AeroSwitcher creates `~/Library/Application Support/AeroSwitcher/config.json` au
 
 If you want the greyed-out "not open yet" launcher tiles (jump straight to launching an app that isn't running), edit that file and add entries under `workspaces`, matching your `.aerospace.toml` groupings. See the **Config file** section of the main documentation for the exact format, this part is optional and can be done any time later, not something that blocks getting the app running.
 
-Quit and reopen AeroSwitcher (or restart your Mac) any time you edit `config.json`, changes aren't picked up live.
+Saving `config.json` applies it within a second, no restart needed (see **Reloading** in the main documentation).
 
 ## 8. The last permission: Accessibility, for the maximize toggle
 
@@ -174,9 +175,11 @@ Separately from AeroSwitcher's own two permissions above, the fullscreen/maximiz
 
 Once you're happy with everything above and don't expect to rebuild again soon (rebuilding resets code signing identity checks in some edge cases, so treat this as a "final" step):
 
-**System Settings > General > Login Items & Extensions** → under "Open at Login" click **+** → select `/Applications/AeroSwitcher.app`.
+Open `/Applications/AeroSwitcher.app`, click its workspace name in the menu bar, and tick **Launch at login**. (It only allows this from an Applications folder, because macOS remembers where the app was.) Adding it by hand in **System Settings > General > Login Items & Extensions** under "Open at Login" works too; the menu then shows it ticked.
 
-That's it, no separate background service needed. It runs with no Dock icon (this is intentional, set via `LSUIElement` in its `Info.plist`) and no window until you press Cmd+Tab.
+That's it, no separate background service needed. It runs with no Dock icon (this is intentional, set via `LSUIElement` in its `Info.plist`) and nothing on screen except its menu bar item until you press Cmd+Tab.
+
+**One icon instead of two:** AeroSwitcher's menu bar item does everything AeroSpace's icon does that you'd use day to day. To hide AeroSpace's icon: **System Settings > Menu Bar**, scroll to **Allow in the Menu Bar**, switch AeroSpace off. AeroSpace keeps running.
 
 Log out and back in once (or restart) to confirm it actually launches on its own before you stop thinking about it.
 
