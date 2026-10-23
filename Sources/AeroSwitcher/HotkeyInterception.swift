@@ -12,11 +12,13 @@ import Cocoa
 class HotkeyManager {
     var eventTap: CFMachPort?
     let controller: SwitcherWindowController
-    let keybinds: ResolvedKeybinds
+    // Read fresh on every key press rather than kept from launch, so a
+    // changed keybind in config.json works the moment it's reloaded (see
+    // SettingsStore in Config.swift). Cheap: it's already worked out.
+    var keybinds: ResolvedKeybinds { settings.current.keybinds }
 
-    init(controller: SwitcherWindowController, keybinds: ResolvedKeybinds) {
+    init(controller: SwitcherWindowController) {
         self.controller = controller
-        self.keybinds = keybinds
     }
 
     func start() {

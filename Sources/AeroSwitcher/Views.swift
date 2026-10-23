@@ -685,3 +685,132 @@ private struct WorkspaceAppIcon: View {
     }
 }
 
+
+// MARK: - Config problems window
+//
+// The small window that lists what's wrong with config.json (and, after a
+// "reload both" from `pkill -HUP AeroSwitcher`, with AeroSpace's config
+// too). Same idea as the window AeroSpace itself opens when its config has
+// errors. Before this, every problem was only print()ed, which nobody sees
+// unless the app was started from Terminal.
+//
+// It's an ordinary window, but on purpose:
+//   - It never takes the keyboard by itself (orderFrontRegardless, not
+//     activate), so saving config.json in your editor doesn't yank you out
+//     of the editor. Click it to use it.
+//   - It can't be resized, which also means it has no working green full
+//     screen button, so maximize.applescript leaves it alone when AeroSpace
+//     notices it (see the dialog check in that script).
+//   - It closes by itself after a reload with no problems left.
+
+struct ConfigProblemSection: Identifiable {
+    let id = UUID()
+    let title: String
+    let summary: String
+    let lines: [String]
+}
+
+struct ConfigProblemsView: View {
+    let sections: [ConfigProblemSection]
+    let openConfig: () -> Void
+    let reload: () -> Void
+    let close: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(sections) { section in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(section.title).font(.headline)
+                    Text(section.summary).font(.callout).foregroundStyle(.secondary)
+                    ScrollView {
+                        // Selectable, so an error can be copied into a
+                        // search or a message to someone helping.
+                        Text(section.lines.map { "• " + $0 }.joined(separator: "\n\n"))
+                            .font(.system(.callout, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                    }
+                    .frame(maxHeight: 220)
+                    .background(Color.primary.opacity(0.05))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+            }
+            HStack {
+                Button("Open config.json", action: openConfig)
+                // Same as `pkill -HUP AeroSwitcher`: reloads both configs.
+                Button("Reload", action: reload)
+                Spacer()
+                Button("Close", action: close).keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding(18)
+        .frame(width: 560)
+    }
+}
+
+@MainActor
+final class ConfigProblemsWindow {
+    static let shared = ConfigProblemsWindow()
+    private var window: NSWindow?
+
+    // Shows, refreshes or closes the window to match the latest reload.
+    // `aerospace` is nil when AeroSpace wasn't reloaded this time (a plain
+    // save of config.json, or app launch), so only AeroSwitcher's own
+    // problems count then.
+    func update(report: ConfigReport, aerospace: AeroSpaceReloadResult?) {
+        var sections: [ConfigProblemSection] = []
+        if !report.errors.isEmpty {
+            sections.append(ConfigProblemSection(
+                title: "config.json has errors",
+                summary: report.keptPreviousSettings
+                    ? "AeroSwitcher is still using your previous settings. Fix the problem and save, it reloads by itself."
+                    : "AeroSwitcher is using its built-in default settings until this is fixed. Fix the problem and save, it reloads by itself.",
+                lines: report.errors + report.warnings))
+        } else if !report.warnings.isEmpty {
+            sections.append(ConfigProblemSection(
+                title: "config.json loaded with warnings",
+                summary: "Everything else was applied. Each item below fell back to its default.",
+                lines: report.warnings))
+        }
+        if let aerospace, !aerospace.ok {
+            sections.append(ConfigProblemSection(
+                title: "AeroSpace's config has problems",
+                summary: "This is ~/.aerospace.toml, reloaded together with config.json. AeroSpace keeps its previous config while there are errors.",
+                lines: [aerospace.output.isEmpty ? "aerospace reload-config failed without saying why." : aerospace.output]))
+        }
+
+        guard !sections.isEmpty else {
+            window?.close()
+            return
+        }
+        show(sections)
+    }
+
+    private func show(_ sections: [ConfigProblemSection]) {
+        let view = ConfigProblemsView(
+            sections: sections,
+            openConfig: { NSWorkspace.shared.open(configFileURL()) },
+            reload: { settings.reloadTogether() },
+            close: { [weak self] in self?.window?.close() })
+        if let window {
+            window.contentView = NSHostingView(rootView: view)
+            window.setContentSize(window.contentView?.fittingSize ?? window.frame.size)
+            window.orderFrontRegardless()
+            return
+        }
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 300),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false)
+        window.title = "AeroSwitcher config"
+        window.isReleasedWhenClosed = false
+        window.level = .floating
+        window.contentView = NSHostingView(rootView: view)
+        window.setContentSize(window.contentView?.fittingSize ?? window.frame.size)
+        window.center()
+        window.orderFrontRegardless()
+        self.window = window
+    }
+}

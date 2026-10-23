@@ -7,8 +7,8 @@ import Cocoa
 // keys. Only the keys that make sense to rebind are listed here — letters,
 // digits, the arrows, and a handful of named keys. If you type a name
 // that's not in this list, resolveKeybinds() below falls back to that
-// key's own default and tells you exactly what happened, rather than the
-// app just quietly not responding to that key.
+// key's own default and reports it as a warning in the problems window,
+// rather than the app just quietly not responding to that key.
 func keyCode(forName name: String) -> Int64? {
     let table: [String: Int64] = [
         "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9,
@@ -34,11 +34,11 @@ struct ResolvedKeybinds {
     let cancel: Int64
 }
 
-func resolveKeybinds(_ config: KeybindConfig) -> ResolvedKeybinds {
+func resolveKeybinds(_ config: KeybindConfig, report: ConfigReport) -> ResolvedKeybinds {
     let defaults = KeybindConfig()
     func resolve(_ label: String, _ configured: String, fallback: String) -> Int64 {
         if let code = keyCode(forName: configured) { return code }
-        print("Config: \"\(configured)\" isn't a key AeroSwitcher recognizes for \(label) — using the default (\"\(fallback)\") instead. Check config.json.")
+        report.warning("keybinds.\(label) is \"\(configured)\", which isn't a key AeroSwitcher recognizes, so the default (\"\(fallback)\") is used instead.")
         return keyCode(forName: fallback)!  // the built-in defaults are always valid names
     }
     let resolved = ResolvedKeybinds(
@@ -64,13 +64,13 @@ func resolveKeybinds(_ config: KeybindConfig) -> ResolvedKeybinds {
     ]
     for i in 0..<named.count {
         for j in (i + 1)..<named.count where named[i].1 == named[j].1 {
-            print("Config: \"\(named[i].0)\" and \"\(named[j].0)\" are both bound to the same key — \"\(named[j].0)\" will never fire. Check config.json.")
+            report.warning("keybinds.\(named[i].0) and keybinds.\(named[j].0) are both set to the same key, so \(named[j].0) will never fire.")
         }
         // Tab (keyCode 48) is permanently what opens the switcher in the
         // first place — it's handled separately, before any of these, so
         // binding another action to it here would just never be reachable.
         if named[i].1 == 48 {
-            print("Config: \"\(named[i].0)\" is bound to Tab, which is always reserved for opening the switcher — pick a different key in config.json.")
+            report.warning("keybinds.\(named[i].0) is set to Tab, which is always reserved for opening the switcher, so it can never fire. Pick a different key.")
         }
     }
 

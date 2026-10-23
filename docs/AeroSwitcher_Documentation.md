@@ -156,11 +156,11 @@ Cmd+\` isn't in the config file's `keybinds` section, unlike everything else, it
 
 ## Config file (`~/Library/Application Support/AeroSwitcher/config.json`)
 
-A plain JSON file, created automatically the first time AeroSwitcher runs, with the keybind defaults already filled in — `workspaces` starts empty on purpose (the app is built without any one person's setup baked into it, so it works cleanly if someone else runs it too), so the switcher itself and the all-workspaces overview work right away, you just won't see any greyed-out "not running yet" tiles until you add some, following the example below. Edit the file any time and relaunch AeroSwitcher (quit and reopen, or just restart your Mac if it's in Login Items) to pick up changes, nothing needs to be rebuilt.
+A plain JSON file, created automatically the first time AeroSwitcher runs, with the keybind defaults already filled in — `workspaces` starts empty on purpose (the app is built without any one person's setup baked into it, so it works cleanly if someone else runs it too), so the switcher itself and the all-workspaces overview work right away, you just won't see any greyed-out "not running yet" tiles until you add some, following the example below. Edit the file any time and save it: AeroSwitcher reloads it by itself within a moment, the same way AeroSpace does with `auto-reload-config = true` (see **Reloading**, below). Nothing needs to be rebuilt or restarted.
 
 It lives under `~/Library/Application Support/`, the standard place a Mac app is supposed to keep its own settings, same folder structure apps like Chrome or Slack use for theirs, rather than a loose dotfile sitting directly in your home folder. `~/Library` is hidden by default in Finder (Cmd+Shift+. in a Finder window toggles hidden files if you ever want to look at it directly), or just open it by path.
 
-It has four sections:
+It has five sections (all but `keybinds` and `workspaces` optional):
 
 ```json
 {
@@ -184,7 +184,8 @@ It has four sections:
   "showTileStatusText" : true,
   "icons" : {
     "Notes" : "~/Pictures/AppIcons/notes.png"
-  }
+  },
+  "autoReloadConfig" : true
 }
 ```
 
@@ -207,12 +208,26 @@ Mainly useful for two cases: an app that isn't in `workspaces` at all (workspace
 
 **`showTileStatusText`**: optional, defaults to `true`. Controls the small "Running" / "Quit" / "No window" line under each greyed-out launcher tile in the normal switcher (not the overview, which never had this text). Set it to `false` for quieter tiles — the small running-dot above the icon (same convention as the Dock) still shows whether an app is alive somewhere, you just lose the word underneath it.
 
-Two safety nets if something's off in the file:
-- **A key name that isn't recognized** falls back to that one action's own default and prints exactly which one, instead of silently doing nothing.
-- **Two actions bound to the same key**, or a key colliding with the reserved Tab, gets called out too (only the first one in line would ever actually fire otherwise).
-- **If the whole file fails to parse** (a missing comma, an extra brace, anything that isn't valid JSON), AeroSwitcher falls back to its built-in defaults entirely for that run and prints the JSON error, rather than crashing or refusing to open.
+**`autoReloadConfig`**: optional, defaults to `true`. Reload config.json by itself whenever it's saved. Set it to `false` to only reload when you ask (see below).
 
-All of these show up as `print()` output if you're running AeroSwitcher from Terminal. If it's running quietly via Login Items instead, quit it, run `/Applications/AeroSwitcher.app/Contents/MacOS/AeroSwitcher` from Terminal once after editing the config, and check what it prints on launch.
+### Reloading
+
+Works the same way as AeroSpace's own config:
+
+- **Save the file and it applies.** AeroSwitcher watches config.json and reloads it within about a second of a save (unless `autoReloadConfig` is `false`). It also notices editors that save by replacing the file with a new copy, like TextEdit.
+- **Errors keep your previous settings.** If the file can't be used at all (invalid JSON such as a missing comma, or a value of the wrong kind such as `"showTileStatusText": "yes"`), AeroSwitcher keeps using the settings it had before and opens a small **AeroSwitcher config** window that says what's wrong and roughly where (line and column for JSON typos, or the exact setting, like `workspaces.Core[2].open is missing`). Only if this happens at launch, with nothing earlier to keep, does it use its built-in defaults until the file is fixed.
+- **Warnings apply everything else.** Smaller mistakes only switch off the one thing that's wrong, and are listed in the same window: a key name that isn't recognized (that action uses its default key), two actions on the same key, an action on the reserved Tab key, an icon file that won't load, an unknown `newWindowStyle`, and any setting name AeroSwitcher doesn't know (usually a typo, which would otherwise silently do nothing).
+- **The window closes by itself** after a save with no problems left. It never takes the keyboard away from your editor; click it to use it. **Open config.json** opens the file, **Reload** reloads both configs (below).
+
+**Reloading AeroSwitcher and AeroSpace together.** `pkill -HUP AeroSwitcher` reloads config.json AND runs `aerospace reload-config --no-gui`, then shows any problems from both in the same window. To put that on a key, add a line like this to the `[mode.main.binding]` section of `~/.aerospace.toml` (the part after `||` reloads AeroSpace alone if AeroSwitcher isn't running):
+
+```toml
+alt-shift-r = 'exec-and-forget pkill -HUP -x AeroSwitcher || aerospace reload-config'
+```
+
+Saving `~/.aerospace.toml` still only reloads AeroSpace (its own `auto-reload-config`), since AeroSwitcher doesn't read that file. Everything is also `print`ed, so running `/Applications/AeroSwitcher.app/Contents/MacOS/AeroSwitcher` from Terminal shows the same messages there.
+
+**Testing a config without touching your real one:** start a copy from Terminal with `AEROSWITCHER_CONFIG_DIR=/some/folder` set, and it reads (and creates) config.json in that folder instead. Quit the normal AeroSwitcher first, two copies would both catch Cmd+Tab.
 
 ## `~/.aerospace.toml`
 

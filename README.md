@@ -88,7 +88,7 @@ On first launch AeroSwitcher creates `~/Library/Application Support/AeroSwitcher
 - give apps custom icons
 - hide the small status text under launcher tiles
 
-Quit and reopen AeroSwitcher after editing. The "Config file" section of the [documentation](docs/AeroSwitcher_Documentation.md) has the full format and examples.
+Changes apply as soon as you save the file, no restart needed. If something in it is wrong, a small window says what. The "Config file" section of the [documentation](docs/AeroSwitcher_Documentation.md) has the full format and examples.
 
 ## Optional: the full-screen window setup
 

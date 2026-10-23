@@ -35,9 +35,7 @@ _ = captureTargetSize
 _ = finderNewWindowScript
 _ = terminalNewWindowScript
 _ = defaultSwitcherConfig
-_ = appConfig
-_ = workspaceLauncherApps
-_ = customIconsByMatchKey
+_ = settings  // reads config.json (launcher tiles, custom icons, keybinds), see SettingsStore
 
 // MARK: - App entry
 
@@ -60,8 +58,15 @@ Task { @MainActor in
     c.mru = MRUTracker()
     controller = c
 
-    hotkeys = HotkeyManager(controller: c, keybinds: resolveKeybinds(appConfig.keybinds))
+    hotkeys = HotkeyManager(controller: c)
     hotkeys?.start()
+
+    // From here on, saving config.json reloads it, and `pkill -HUP
+    // AeroSwitcher` reloads it together with AeroSpace's config.
+    settings.startWatching()
+    // Anything wrong in config.json at launch gets the same window a
+    // reload would show, instead of only a print nobody sees.
+    ConfigProblemsWindow.shared.update(report: settings.lastReport, aerospace: nil)
 }
 
 app.run()

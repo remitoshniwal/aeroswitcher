@@ -5,8 +5,9 @@ import Cocoa
 // Everything below reads from a plain JSON file there, created automatically
 // (empty keybinds/workspaces filled in with defaults, "workspaces" itself
 // left blank) the very first time AeroSwitcher runs. Edit that file and
-// relaunch the app any time — nothing here needs to change or be rebuilt
-// for that.
+// save it: AeroSwitcher reloads it by itself, the same way AeroSpace does
+// with `auto-reload-config = true` (see SettingsStore, below). Nothing here
+// needs to change or be rebuilt for that.
 //
 // Two things live in it:
 //   "keybinds"   — which key does what while the switcher panel is open
@@ -16,9 +17,13 @@ import Cocoa
 //                  workspace, same idea as the list this replaced.
 //
 // Two safety notes, since a config file is very easy to typo:
-//   - A key name AeroSwitcher doesn't recognize falls back to that one
-//     key's own default and prints which one, instead of silently doing
-//     nothing or crashing.
+//   - Same rules as AeroSpace's own config: a file that can't be read at
+//     all (broken JSON, a value of the wrong type) is an ERROR, and the
+//     previous working settings stay in use. Smaller mistakes (a key name
+//     AeroSwitcher doesn't recognize, an icon file that won't load, a
+//     misspelled setting) are WARNINGS: everything else still applies, and
+//     that one thing falls back to its default. Either way a small window
+//     lists exactly what's wrong (see ConfigProblemsWindow in Views.swift).
 //   - "newWindowStyle" only accepts the words "finder" or "terminal" —
 //     never raw AppleScript. That's deliberate: it means a mistake in this
 //     file can never make the app run something you didn't intend.
@@ -90,6 +95,10 @@ struct SwitcherConfig: Codable {
     // config.json files were already written, so it has to tolerate being
     // missing entirely rather than requiring the key.
     var icons: [String: String]? = nil
+    // Reload config.json by itself whenever it's saved, like AeroSpace's
+    // `auto-reload-config = true`. Optional for the same "older files don't
+    // have this key" reason as the two above; nil means on.
+    var autoReloadConfig: Bool? = nil
 }
 
 // nil (key absent, e.g. an older config.json) means the same thing as true.
@@ -116,7 +125,8 @@ func standaloneIcons(_ config: SwitcherConfig) -> [String: String] {
 let defaultSwitcherConfig = SwitcherConfig(
     keybinds: KeybindConfig(),
     workspaces: [:],
-    showTileStatusText: true  // written out explicitly so a fresh config.json shows it, instead of leaving the key out entirely
+    showTileStatusText: true,  // written out explicitly so a fresh config.json shows it, instead of leaving the key out entirely
+    autoReloadConfig: true     // same reason
 )
 
 // ~/Library/Application Support/<AppName>/ is the standard place a Mac app
@@ -126,9 +136,14 @@ let defaultSwitcherConfig = SwitcherConfig(
 // directly in ~.
 // Shared by configFileURL (below) and AppWorkspaceTracker — both files
 // live in the same folder, so there's exactly one place that creates it.
+//
+// AEROSWITCHER_CONFIG_DIR is only for testing: it points a copy started from
+// Terminal at a scratch folder instead, so trying out broken config files
+// can never touch the real one. A normally opened app never has it set.
+// (Setting HOME doesn't work for this, NSHomeDirectory() ignores it.)
 func appSupportDirectory() -> URL {
-    let dir = URL(fileURLWithPath: NSHomeDirectory())
-        .appendingPathComponent("Library/Application Support/AeroSwitcher")
+    let dir = ProcessInfo.processInfo.environment["AEROSWITCHER_CONFIG_DIR"].map { URL(fileURLWithPath: $0) }
+        ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support/AeroSwitcher")
     do {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     } catch {
@@ -152,7 +167,34 @@ func writeConfig(_ config: SwitcherConfig, to url: URL) {
     }
 }
 
-func loadConfig() -> SwitcherConfig {
+// Collects everything wrong with one read of config.json, so it can all be
+// shown together in one window (and still printed, for when the app runs
+// from Terminal). Errors mean the file couldn't be used at all, warnings
+// mean one part of it was ignored. Same split as AeroSpace's config.
+final class ConfigReport {
+    var errors: [String] = []
+    var warnings: [String] = []
+    // Only meaningful when there are errors: true if the settings from
+    // before this reload are still in use, false if there was nothing to
+    // keep (the app just started) and the built-in defaults are in use.
+    var keptPreviousSettings = false
+
+    var isClean: Bool { errors.isEmpty && warnings.isEmpty }
+
+    func error(_ message: String) {
+        errors.append(message)
+        print("Config error: \(message)")
+    }
+
+    func warning(_ message: String) {
+        warnings.append(message)
+        print("Config warning: \(message)")
+    }
+}
+
+// Reads and decodes config.json. nil means it couldn't be used at all (the
+// reason is in `report`), and the caller decides what to fall back to.
+func readConfigFile(report: ConfigReport) -> SwitcherConfig? {
     let url = configFileURL()
     if !FileManager.default.fileExists(atPath: url.path) {
         // First run — write out a real, ready-to-edit file (with keybind
@@ -160,19 +202,95 @@ func loadConfig() -> SwitcherConfig {
         // format from scratch. "workspaces" starts empty on purpose; see
         // AeroSwitcher_Documentation.md for a filled-in example to copy from.
         writeConfig(defaultSwitcherConfig, to: url)
-        print("Created \(url.path). Add your own workspace apps to it (see AeroSwitcher_Documentation.md for an example) and relaunch AeroSwitcher to pick up changes.")
+        print("Created \(url.path). Add your own workspace apps to it (see AeroSwitcher_Documentation.md for an example) and save it, AeroSwitcher picks up changes by itself.")
         return defaultSwitcherConfig
     }
+    let data: Data
     do {
-        let data = try Data(contentsOf: url)
-        return try JSONDecoder().decode(SwitcherConfig.self, from: data)
+        data = try Data(contentsOf: url)
     } catch {
-        print("Couldn't read \(url.path) (\(error.localizedDescription)) — using default settings instead. Fix the JSON there and relaunch to pick up your changes.")
-        return defaultSwitcherConfig
+        report.error("Couldn't read \(url.path): \(error.localizedDescription)")
+        return nil
+    }
+    do {
+        let config = try JSONDecoder().decode(SwitcherConfig.self, from: data)
+        warnAboutUnknownKeys(in: data, report: report)
+        return config
+    } catch {
+        report.error(describeDecodingError(error))
+        return nil
     }
 }
 
-let appConfig = loadConfig()
+// Swift's JSON reading gives very general error messages ("the data
+// couldn't be read because it isn't in the correct format"). This turns
+// them into something that says WHERE in the file the problem is, e.g.
+// "workspaces.Core[2].open is missing".
+func describeDecodingError(_ error: Error) -> String {
+    guard let decodingError = error as? DecodingError else { return error.localizedDescription }
+    func path(_ keys: [CodingKey]) -> String {
+        var result = ""
+        for key in keys {
+            if let index = key.intValue {
+                result += "[\(index)]"
+            } else {
+                result += (result.isEmpty ? "" : ".") + key.stringValue
+            }
+        }
+        return result.isEmpty ? "the file" : result
+    }
+    func expected(_ type: Any.Type) -> String {
+        let name = "\(type)"
+        if type == Bool.self { return "true or false" }
+        if type == String.self { return "text in double quotes" }
+        if name.hasPrefix("Array") { return "a list in [ ]" }
+        if name.hasPrefix("Dictionary") { return "a group in { }" }
+        return name
+    }
+    switch decodingError {
+    case .typeMismatch(let type, let context):
+        return "\(path(context.codingPath)) has the wrong kind of value, it should be \(expected(type))."
+    case .valueNotFound(let type, let context):
+        return "\(path(context.codingPath)) is empty (null), it should be \(expected(type))."
+    case .keyNotFound(let key, let context):
+        return "\(path(context.codingPath + [key])) is missing."
+    case .dataCorrupted(let context):
+        // A JSON typo (missing comma, extra bracket...) lands here. The
+        // underlying error usually knows the line and column.
+        let detail = (context.underlyingError as NSError?)?.userInfo["NSDebugDescription"] as? String
+        return "config.json isn't valid JSON" + (detail.map { ": \($0)" } ?? ".") + " A common cause is a missing or extra comma."
+    @unknown default:
+        return decodingError.localizedDescription
+    }
+}
+
+// Swift's JSON reading silently skips keys it doesn't know, so a typo like
+// "showTileStatsText" would just quietly do nothing. AeroSpace warns about
+// unknown keys in its config, so this does the same. Only checks spelling,
+// the decode above already checked the values.
+func warnAboutUnknownKeys(in data: Data, report: ConfigReport) {
+    guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+    let topLevelKeys: Set = ["keybinds", "workspaces", "showTileStatusText", "icons", "autoReloadConfig"]
+    let keybindKeys: Set = ["cycleNext", "cyclePrevious", "enterGreyedRow", "exitGreyedRow", "pageUp", "pageDown", "confirm", "cancel"]
+    let appKeys: Set = ["name", "match", "open", "newWindowStyle", "icon"]
+    for key in root.keys.sorted() where !topLevelKeys.contains(key) {
+        report.warning("\"\(key)\" isn't a setting AeroSwitcher knows, so it's ignored. Check the spelling.")
+    }
+    if let keybinds = root["keybinds"] as? [String: Any] {
+        for key in keybinds.keys.sorted() where !keybindKeys.contains(key) {
+            report.warning("keybinds.\(key) isn't a keybind AeroSwitcher knows, so it's ignored. Check the spelling.")
+        }
+    }
+    if let workspaces = root["workspaces"] as? [String: Any] {
+        for workspace in workspaces.keys.sorted() {
+            for (index, entry) in ((workspaces[workspace] as? [[String: Any]]) ?? []).enumerated() {
+                for key in entry.keys.sorted() where !appKeys.contains(key) {
+                    report.warning("workspaces.\(workspace)[\(index)].\(key) isn't an app setting AeroSwitcher knows, so it's ignored. Check the spelling.")
+                }
+            }
+        }
+    }
+}
 
 // Shared by both config.json sources of a custom icon — a per-app "icon"
 // field inside "workspaces", and the standalone top-level "icons" dict —
@@ -180,34 +298,36 @@ let appConfig = loadConfig()
 // warns if it didn't work, rather than two copies that could drift.
 // `context` is just for that warning message, so it's clear which config
 // entry the bad path came from.
-func loadCustomIcon(path: String, context: String) -> NSImage? {
+func loadCustomIcon(path: String, context: String, report: ConfigReport) -> NSImage? {
     let expanded = (path as NSString).expandingTildeInPath
     if let image = NSImage(contentsOfFile: expanded) {
         return image
     }
-    print("Config: \(context) has icon \"\(path)\", which couldn't be loaded as an image — ignoring it.")
+    report.warning("\(context) has icon \"\(path)\", which couldn't be loaded as an image, so it's ignored.")
     return nil
 }
 
-func resolveLauncherApps(from config: SwitcherConfig) -> [String: [LauncherApp]] {
+func resolveLauncherApps(from config: SwitcherConfig, report: ConfigReport) -> [String: [LauncherApp]] {
     var result: [String: [LauncherApp]] = [:]
-    for (workspace, apps) in config.workspaces {
+    // Sorted only so warnings come out in the same order every time.
+    for workspace in config.workspaces.keys.sorted() {
+        let apps = config.workspaces[workspace] ?? []
         result[workspace] = apps.map { entry in
             let script: [String]?
             switch entry.newWindowStyle?.lowercased() {
             case "finder": script = finderNewWindowScript
             case "terminal": script = terminalNewWindowScript
             case .some(let other):
-                print("Config: workspace \"\(workspace)\", app \"\(entry.name)\" has newWindowStyle \"\(other)\", which isn't recognized (only \"finder\" or \"terminal\" are) — ignoring it.")
+                report.warning("workspace \"\(workspace)\", app \"\(entry.name)\" has newWindowStyle \"\(other)\", which isn't recognized (only \"finder\" or \"terminal\" are), so it's ignored.")
                 script = nil
             case nil:
                 script = nil
             }
-            // Loaded once, right here, rather than by path every time a
-            // tile draws — a bad or missing path only ever prints once, at
-            // startup, instead of spamming on every Cmd+Tab.
+            // Loaded once per (re)load, right here, rather than by path
+            // every time a tile draws — a bad or missing path is only ever
+            // reported once per load, instead of on every Cmd+Tab.
             let loadedIcon = entry.icon.flatMap {
-                loadCustomIcon(path: $0, context: "workspace \"\(workspace)\", app \"\(entry.name)\"")
+                loadCustomIcon(path: $0, context: "workspace \"\(workspace)\", app \"\(entry.name)\"", report: report)
             }
             return LauncherApp(displayName: entry.name, matchKey: entry.match, openName: entry.open, newWindowScript: script, customIcon: loadedIcon)
         }
@@ -215,27 +335,203 @@ func resolveLauncherApps(from config: SwitcherConfig) -> [String: [LauncherApp]]
     return result
 }
 
-let workspaceLauncherApps: [String: [LauncherApp]] = resolveLauncherApps(from: appConfig)
+// Everything the rest of the app needs from one successful read of
+// config.json, worked out once per load instead of on every Cmd+Tab.
+struct LoadedSettings {
+    let config: SwitcherConfig
+    let launcherApps: [String: [LauncherApp]]
+    // Every config.json entry that set a custom icon, flattened across all
+    // workspaces, matchKey paired with the already-loaded image.
+    let customIcons: [(matchKey: String, icon: NSImage)]
+    let keybinds: ResolvedKeybinds
 
-// Every config.json entry that set a custom icon, flattened across all
-// workspaces, matchKey paired with the already-loaded image. Built once
-// here rather than re-scanning workspaceLauncherApps on every icon draw.
-// Not `private` (which would hide it from every other file) only because
-// main.swift touches it at launch, see "Start-up order" there. Nothing
-// outside this file is meant to read it otherwise, use customIcon(forAppName:).
-let customIconsByMatchKey: [(matchKey: String, icon: NSImage)] =
-    // Source 1: every "icon" set on a per-app entry inside "workspaces".
-    workspaceLauncherApps.values.flatMap { $0 }.compactMap { app in
-        app.customIcon.map { (app.matchKey, $0) }
+    init(config: SwitcherConfig, report: ConfigReport) {
+        self.config = config
+        let launcherApps = resolveLauncherApps(from: config, report: report)
+        self.launcherApps = launcherApps
+        // Source 1: every "icon" set on a per-app entry inside "workspaces".
+        // Source 2: config.json's standalone top-level "icons" dict — for an
+        // app that isn't in "workspaces" at all, so there's no LauncherApp
+        // entry for it to carry a customIcon on. This is the only source that
+        // can give a custom icon to an app you haven't added as a launcher
+        // tile anywhere.
+        self.customIcons = launcherApps.values.flatMap { $0 }.compactMap { app in
+            app.customIcon.map { (app.matchKey, $0) }
+        } + standaloneIcons(config).sorted { $0.key < $1.key }.compactMap { (name, path) -> (String, NSImage)? in
+            loadCustomIcon(path: path, context: "icons entry \"\(name)\"", report: report).map { (name, $0) }
+        }
+        self.keybinds = resolveKeybinds(config.keybinds, report: report)
     }
-    // Source 2: config.json's standalone top-level "icons" dict — for an
-    // app that isn't in "workspaces" at all, so there's no LauncherApp
-    // entry for it to carry a customIcon on. This is the only source that
-    // can give a custom icon to an app you haven't added as a launcher
-    // tile anywhere.
-    + standaloneIcons(appConfig).compactMap { (name, path) -> (String, NSImage)? in
-        loadCustomIcon(path: path, context: "icons entry \"\(name)\"").map { (name, $0) }
+}
+
+// MARK: - Reloading (same idea as AeroSpace's auto-reload-config)
+//
+// The one place the current settings live. It used to be a few global
+// `let`s, worked out once at launch, so any change to config.json needed
+// the app restarted. Now:
+//   - Saving config.json reloads it within a moment (if autoReloadConfig
+//     isn't turned off), like AeroSpace with `auto-reload-config = true`.
+//   - `pkill -HUP AeroSwitcher` reloads AeroSwitcher AND AeroSpace together
+//     and shows both results in one window (reloadTogether). That's the
+//     command to bind to a key in .aerospace.toml, and what a menu bar
+//     "Reload config" item will call later.
+//   - A config.json that can't be read keeps the previous settings, a
+//     partly wrong one applies the rest. Either way the problems window
+//     opens, and closes by itself once a save has no problems left.
+//
+// Every read and every reload happens on the main thread (the event tap,
+// the panel, the file watcher and the reload signal all run there), the
+// lock is only a cheap safety net in case that ever changes.
+final class SettingsStore {
+    private let lock = NSLock()
+    private var loaded: LoadedSettings
+    // What the last load found, so the problems window can be shown at
+    // launch once the app is far enough along to show windows.
+    private(set) var lastReport: ConfigReport
+
+    private var fileWatcher: DispatchSourceFileSystemObject?
+    private var reloadSignal: DispatchSourceSignal?
+    private var pendingAutoReload: DispatchWorkItem?
+
+    var current: LoadedSettings {
+        lock.lock()
+        defer { lock.unlock() }
+        return loaded
     }
+
+    init() {
+        let report = ConfigReport()
+        let config = readConfigFile(report: report)
+        // Nothing to keep yet at launch, so a broken file means defaults
+        // until it's fixed, same as before this existed (but now you're
+        // told, instead of the tiles just quietly disappearing).
+        loaded = LoadedSettings(config: config ?? defaultSwitcherConfig, report: report)
+        lastReport = report
+    }
+
+    // Reads config.json again. On an error the current settings stay in
+    // use; otherwise the new ones replace them right away, the next Cmd+Tab
+    // already uses them.
+    @discardableResult
+    func reload() -> ConfigReport {
+        let report = ConfigReport()
+        if let config = readConfigFile(report: report) {
+            let newSettings = LoadedSettings(config: config, report: report)
+            lock.lock()
+            loaded = newSettings
+            lock.unlock()
+            if report.isClean { print("Reloaded config.json, no problems.") }
+        } else {
+            report.keptPreviousSettings = true
+        }
+        lastReport = report
+        updateFileWatcher()
+        return report
+    }
+
+    // Called once at launch (main.swift), after the event tap is running.
+    func startWatching() {
+        updateFileWatcher()
+
+        // SIGHUP is the classic "reload your settings" signal for programs
+        // without a window. By default it quits the app, so that default is
+        // switched off first and replaced with a reload.
+        signal(SIGHUP, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: SIGHUP, queue: .main)
+        source.setEventHandler { [weak self] in self?.reloadTogether() }
+        source.resume()
+        reloadSignal = source
+    }
+
+    // "Reload config" for both apps at once: AeroSwitcher's config.json,
+    // and AeroSpace's ~/.aerospace.toml through `aerospace reload-config
+    // --no-gui` (so AeroSpace doesn't open its own error window too). Both
+    // results end up in the same problems window. AeroSpace's reload runs
+    // off the main thread, it's a separate program and takes a moment.
+    func reloadTogether() {
+        print("Reload requested: reloading config.json and AeroSpace's config together.")
+        let report = reload()
+        Task.detached {
+            let aerospaceResult = reloadAeroSpaceConfig()
+            await MainActor.run {
+                ConfigProblemsWindow.shared.update(report: report, aerospace: aerospaceResult)
+            }
+        }
+    }
+
+    // Starts, keeps or stops watching config.json, depending on
+    // autoReloadConfig. Watching means: macOS tells us when the file
+    // changes, no checking over and over.
+    private func updateFileWatcher() {
+        let wanted = current.config.autoReloadConfig ?? true
+        if !wanted {
+            fileWatcher?.cancel()
+            fileWatcher = nil
+            return
+        }
+        if fileWatcher == nil { armFileWatcher(attempt: 0) }
+    }
+
+    private func armFileWatcher(attempt: Int) {
+        let path = configFileURL().path
+        let descriptor = open(path, O_EVTONLY)
+        guard descriptor >= 0 else {
+            // Right after an editor swapped the file (see below), there can
+            // be a moment where it doesn't exist yet. Try again a few times.
+            if attempt < 20 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                    self?.armFileWatcher(attempt: attempt + 1)
+                }
+            } else {
+                print("Couldn't watch \(path) for changes, auto reload is off until AeroSwitcher restarts.")
+            }
+            return
+        }
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: descriptor, eventMask: [.write, .extend, .delete, .rename], queue: .main)
+        source.setEventHandler { [weak self, weak source] in
+            guard let self, let source else { return }
+            // Many editors (TextEdit, VS Code with some settings) don't
+            // change the file in place, they write a new copy and swap it
+            // in. The file being watched is then gone, so watch the new one.
+            if !source.data.isDisjoint(with: [.delete, .rename]) {
+                source.cancel()
+                self.fileWatcher = nil
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                    self?.armFileWatcher(attempt: 0)
+                }
+            }
+            self.scheduleAutoReload()
+        }
+        source.setCancelHandler { close(descriptor) }
+        source.resume()
+        fileWatcher = source
+    }
+
+    // One save often arrives as several change events in a row; waiting a
+    // moment and reloading once avoids reading a half-written file.
+    private func scheduleAutoReload() {
+        pendingAutoReload?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            print("config.json changed, reloading.")
+            let report = self.reload()
+            MainActor.assumeIsolated {
+                ConfigProblemsWindow.shared.update(report: report, aerospace: nil)
+            }
+        }
+        pendingAutoReload = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+    }
+}
+
+let settings = SettingsStore()
+
+// The names the rest of the app already used, now reading whatever is
+// currently loaded instead of a value fixed at launch.
+var appConfig: SwitcherConfig { settings.current.config }
+var workspaceLauncherApps: [String: [LauncherApp]] { settings.current.launcherApps }
+var customIconsByMatchKey: [(matchKey: String, icon: NSImage)] { settings.current.customIcons }
 
 // The one place every icon shown anywhere in AeroSwitcher (the overview's
 // real-window icons, its homeless-app icons, and — see LauncherCard — the

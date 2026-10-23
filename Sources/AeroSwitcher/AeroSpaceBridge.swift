@@ -219,3 +219,34 @@ func buildWorkspaceSummaries(allWorkspaceNames: [String], windows: [AeroWindow],
     }
 }
 
+// What `aerospace reload-config` said, for the "reload both together"
+// report (see SettingsStore.reloadTogether in Config.swift).
+struct AeroSpaceReloadResult {
+    let ok: Bool
+    let output: String
+}
+
+// Asks AeroSpace to reload ~/.aerospace.toml. --no-gui stops AeroSpace
+// from opening its own error window, since AeroSwitcher shows AeroSpace's
+// problems in its own window next to its own. Exit code 0 means the config
+// had no errors; anything else, the reason is in the output. This also
+// catches AeroSpace not running at all (the CLI then can't connect).
+// Waits for the command, so only call it off the main thread.
+func reloadAeroSpaceConfig() -> AeroSpaceReloadResult {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: aerospacePath)
+    process.arguments = ["reload-config", "--no-gui"]
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = pipe
+    do {
+        try process.run()
+    } catch {
+        return AeroSpaceReloadResult(ok: false, output: "Couldn't run \(aerospacePath): \(error.localizedDescription)")
+    }
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    let output = (String(data: data, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    print("aerospace reload-config: exit \(process.terminationStatus)\(output.isEmpty ? "" : ", \(output)")")
+    return AeroSpaceReloadResult(ok: process.terminationStatus == 0, output: output)
+}
