@@ -63,12 +63,19 @@ func getWindows(scope: String) -> [AeroWindow] {
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
     let output = String(data: data, encoding: .utf8) ?? ""
     var windows: [AeroWindow] = []
+    // AeroSwitcher's own windows (the config problems window, About, the
+    // "Hide AeroSpace's icon" dialog) are normal windows to AeroSpace, so it
+    // lists them too. They'd show up as an "AeroSwitcher" card in Cmd+Tab
+    // and the overview, which is never useful, so they're left out here.
+    let ownPID = ProcessInfo.processInfo.processIdentifier
     for line in output.split(separator: "\n") {
         let parts = line.split(separator: "|", maxSplits: 4, omittingEmptySubsequences: false)
             .map(String.init)
         if parts.count >= 4 {
             let title = parts.count >= 5 ? parts[4] : ""
-            windows.append(AeroWindow(id: parts[0], appPID: Int32(parts[1]) ?? 0, workspace: parts[2], appName: parts[3], title: title))
+            let window = AeroWindow(id: parts[0], appPID: Int32(parts[1]) ?? 0, workspace: parts[2], appName: parts[3], title: title)
+            if window.appPID == ownPID { continue }
+            windows.append(window)
         }
     }
     return windows
