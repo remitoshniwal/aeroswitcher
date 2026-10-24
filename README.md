@@ -10,7 +10,7 @@ If you use AeroSpace workspaces to keep things apart (school in one, music in an
 - **Launcher tiles.** Apps you've assigned to a workspace but haven't opened yet show up as grey tiles, so you can launch them straight from the switcher.
 - **Cmd+\` overview.** A read-only view of every workspace and what's open in it.
 - **Left-hand keyboard controls.** Navigate the panel without leaving the Cmd key. All keys are configurable.
-- **Settings window.** Launcher tiles (pick apps from a list), keys (press a key to record it), custom icons and the other options, without editing a file. Changes apply instantly.
+- **Settings window.** Launcher tiles (pick apps from a list), keys (press a key to record it), custom icons (one by one, or a whole folder of images named after your apps at once) and the other options, without editing a file. Changes apply instantly.
 - **One menu bar icon.** Shows the workspace you're in, with a menu that covers what AeroSpace's own icon does: switch workspaces, enable or disable AeroSpace, reload both configs, open the settings, check permissions, launch at login, quit. It can also hide AeroSpace's icon (by pushing it off screen, since AeroSpace quits if its icon is switched off).
 - **Lightweight.** No Dock icon, and nothing else on screen until you press Cmd+Tab. It only talks to AeroSpace through its command line tool and never changes AeroSpace itself.
 

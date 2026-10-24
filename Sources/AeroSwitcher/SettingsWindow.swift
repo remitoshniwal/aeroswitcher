@@ -325,6 +325,9 @@ final class SettingsModel: ObservableObject {
         let label: String         // shown in the window
         let customPath: String?   // the image file in use, if any
         let appIcon: NSImage      // the app's own icon, shown when there's no custom one
+        // Every name this app goes by (tile name, match, open, running
+        // name), for matching image file names in "Use icons from a folder".
+        let names: [String]
         var id: String { key.lowercased() }
     }
 
@@ -339,16 +342,18 @@ final class SettingsModel: ObservableObject {
             // order customIcon(forAppName:) in Config.swift checks them in.
             let tilePath = allTiles.first { $0.match == tile.match && $0.icon != nil }?.icon
             rows.append(IconRow(key: tile.match, label: tile.name, customPath: tilePath ?? config.icons?[tile.match],
-                                appIcon: appIcon(match: tile.match, open: tile.open)))
+                                appIcon: appIcon(match: tile.match, open: tile.open),
+                                names: [tile.name, tile.match, tile.open]))
         }
         for (key, path) in (config.icons ?? [:]).sorted(by: { $0.key < $1.key })
         where !rows.contains(where: { $0.key.caseInsensitiveCompare(key) == .orderedSame }) {
-            rows.append(IconRow(key: key, label: key, customPath: path, appIcon: appIcon(match: key, open: key)))
+            rows.append(IconRow(key: key, label: key, customPath: path, appIcon: appIcon(match: key, open: key), names: [key]))
         }
         for running in NSWorkspace.shared.runningApplications where running.activationPolicy == .regular {
             guard let name = running.localizedName, !rows.contains(where: { namesMatch($0.key, name) }) else { continue }
             let icon = running.bundleURL.map { NSWorkspace.shared.icon(forFile: $0.path) } ?? running.icon
-            rows.append(IconRow(key: name, label: name, customPath: nil, appIcon: icon ?? NSWorkspace.shared.icon(for: .applicationBundle)))
+            rows.append(IconRow(key: name, label: name, customPath: nil, appIcon: icon ?? NSWorkspace.shared.icon(for: .applicationBundle),
+                                names: [name]))
         }
         return rows.sorted { $0.label.localizedStandardCompare($1.label) == .orderedAscending }
     }
@@ -357,28 +362,96 @@ final class SettingsModel: ObservableObject {
     // place); anything else goes in the top-level "icons" section, which
     // applies everywhere the app shows up.
     func setIcon(path: String?, for key: String) {
-        let stored = path.map { ($0 as NSString).abbreviatingWithTildeInPath }
-        edit("set icon for \(key) = \(stored ?? "(removed)")", touching: [["icons"], ["workspaces"]]) { tree in
+        setIcons([(key: key, path: path)])
+    }
+
+    // Several icons in ONE change to config.json (the folder import), so
+    // it's one save, one reload and one backup, not one per app. A nil
+    // path removes that app's custom icon.
+    func setIcons(_ changes: [(key: String, path: String?)]) {
+        let stored = changes.map { (key: $0.key, path: $0.path.map { ($0 as NSString).abbreviatingWithTildeInPath }) }
+        let description = stored.count == 1
+            ? "set icon for \(stored[0].key) = \(stored[0].path ?? "(removed)")"
+            : "set \(stored.count) icons: " + stored.map { "\($0.key) = \($0.path ?? "(removed)")" }.joined(separator: ", ")
+        edit(description, touching: [["icons"], ["workspaces"]]) { tree in
             var workspaces = tree["workspaces"] as? [String: Any] ?? [:]
-            var changedATile = false
-            for (name, value) in workspaces {
-                guard var list = value as? [Any] else { continue }
-                for index in list.indices {
-                    guard var entry = list[index] as? [String: Any],
-                          entry["match"] as? String == key, entry["icon"] != nil else { continue }
-                    entry["icon"] = stored
-                    list[index] = entry
-                    changedATile = true
+            var icons = tree["icons"] as? [String: Any] ?? [:]
+            for (key, path) in stored {
+                var changedATile = false
+                for (name, value) in workspaces {
+                    guard var list = value as? [Any] else { continue }
+                    for index in list.indices {
+                        guard var entry = list[index] as? [String: Any],
+                              entry["match"] as? String == key, entry["icon"] != nil else { continue }
+                        entry["icon"] = path
+                        list[index] = entry
+                        changedATile = true
+                    }
+                    workspaces[name] = list
                 }
-                workspaces[name] = list
+                if path == nil || !changedATile {
+                    icons[key] = path
+                }
             }
             if tree["workspaces"] != nil { tree["workspaces"] = workspaces }
-            var icons = tree["icons"] as? [String: Any] ?? [:]
-            if stored == nil || !changedATile {
-                icons[key] = stored
-            }
             if tree["icons"] != nil || !icons.isEmpty { tree["icons"] = icons }
         }
+    }
+
+    // MARK: Icons from a folder
+
+    struct IconFolderMatch: Identifiable {
+        let row: IconRow
+        let file: URL
+        let exact: Bool  // false = only part of the name matched, worth a look
+        var id: String { row.id }
+    }
+
+    // Matches the images in a folder to apps by file name, for "Use icons
+    // from a folder...". Nothing is saved here, the sheet shows the result
+    // first. Names are compared without capitals, spaces or punctuation,
+    // so "vs code.png" matches the tile named "VS Code".
+    //   Exact:  the file name IS one of the app's names ("calendar" for
+    //           Calendar, "ableton" for the tile whose match is "Ableton").
+    //   Close:  one contains the other ("settings" in "System Settings"),
+    //           only for names of 4 letters or more, so a file called
+    //           "go.png" doesn't land on every app with "go" in its name.
+    // Each app gets at most one image: an exact match beats a close one,
+    // then the shorter file name wins. Only the folder itself is looked
+    // at, not folders inside it.
+    func matchIcons(inFolder folder: URL) -> (matches: [IconFolderMatch], unmatched: [String]) {
+        let files = ((try? FileManager.default.contentsOfDirectory(
+            at: folder, includingPropertiesForKeys: [.contentTypeKey], options: [.skipsHiddenFiles])) ?? [])
+            .filter { (try? $0.resourceValues(forKeys: [.contentTypeKey]))?.contentType?.conforms(to: .image) == true }
+            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+        func simplified(_ name: String) -> String {
+            name.lowercased().filter { $0.isLetter || $0.isNumber }
+        }
+        var matches: [IconFolderMatch] = []
+        for row in iconRows() {
+            let names = row.names.map(simplified).filter { !$0.isEmpty }
+            var best: (file: URL, exact: Bool)?
+            for file in files {
+                let fileName = simplified(file.deletingPathExtension().lastPathComponent)
+                guard !fileName.isEmpty else { continue }
+                let exact = names.contains(fileName)
+                let close = !exact && names.contains { name in
+                    min(name.count, fileName.count) >= 4 && (name.contains(fileName) || fileName.contains(name))
+                }
+                guard exact || close else { continue }
+                if let current = best {
+                    let better = (exact && !current.exact)
+                        || (exact == current.exact && file.lastPathComponent.count < current.file.lastPathComponent.count)
+                    if !better { continue }
+                }
+                best = (file, exact)
+            }
+            if let best { matches.append(IconFolderMatch(row: row, file: best.file, exact: best.exact)) }
+        }
+        let used = Set(matches.map { $0.file })
+        let unmatched = files.filter { !used.contains($0) }.map { $0.lastPathComponent }
+        print("Settings: icon folder \(folder.path): \(files.count) images, \(matches.count) matched, unmatched: \(unmatched)")
+        return (matches, unmatched)
     }
 }
 
@@ -877,11 +950,16 @@ struct KeysTab: View {
 
 struct IconsTab: View {
     @ObservedObject var model: SettingsModel
+    @State private var importFolder: URL?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Custom icons show in the switcher's launcher tiles and the Cmd+` overview. The image file is not copied, so keep it where it is.")
-                .font(.caption).foregroundStyle(.secondary)
+            HStack(alignment: .top) {
+                Text("Custom icons show in the switcher's launcher tiles and the Cmd+` overview. The image file is not copied, so keep it where it is.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("Use icons from a folder...") { chooseFolder() }
+            }
             List(model.iconRows()) { row in
                 let custom = row.customPath.flatMap { NSImage(contentsOfFile: ($0 as NSString).expandingTildeInPath) }
                 HStack {
@@ -905,6 +983,24 @@ struct IconsTab: View {
                 }
             }
         }
+        .sheet(isPresented: Binding(get: { importFolder != nil }, set: { if !$0 { importFolder = nil } })) {
+            if let importFolder {
+                IconFolderImportView(model: model, folder: importFolder) { self.importFolder = nil }
+            }
+        }
+    }
+
+    // The folder import: pick a folder, then a sheet shows which image
+    // goes to which app before anything is saved.
+    private func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
+        panel.message = "Pick the folder with your icon images. An image named after an app is matched to it (calendar.png goes to Calendar)."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        importFolder = url
     }
 
     private func chooseImage(for key: String) {
@@ -913,5 +1009,80 @@ struct IconsTab: View {
         panel.prompt = "Use"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         model.setIcon(path: url.path, for: key)
+    }
+}
+
+// The "Use icons from a folder..." sheet. Lists every app an image was
+// matched to, each with a tick (all ticked to start with), and the images
+// that didn't match any app. Only "Use" saves anything, all in one change.
+struct IconFolderImportView: View {
+    @ObservedObject var model: SettingsModel
+    let folder: URL
+    let close: () -> Void
+    @State private var matches: [SettingsModel.IconFolderMatch] = []
+    @State private var unmatched: [String] = []
+    @State private var chosen = Set<String>()
+    @State private var loaded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Icons from \((folder.path as NSString).abbreviatingWithTildeInPath)").font(.headline)
+            Text("Matched by file name. Untick anything that's wrong. Nothing is saved until you click Use.")
+                .font(.caption).foregroundStyle(.secondary)
+            List {
+                if loaded && matches.isEmpty {
+                    Text("No image in this folder is named after one of your apps.").foregroundStyle(.secondary)
+                }
+                ForEach(matches) { match in
+                    HStack {
+                        Toggle("", isOn: Binding(
+                            get: { chosen.contains(match.id) },
+                            set: { if $0 { chosen.insert(match.id) } else { chosen.remove(match.id) } }))
+                            .labelsHidden()
+                        Image(nsImage: currentIcon(match.row)).resizable().frame(width: 24, height: 24)
+                        Image(systemName: "arrow.right").foregroundStyle(.secondary)
+                        Image(nsImage: NSImage(contentsOf: match.file) ?? match.row.appIcon).resizable().frame(width: 24, height: 24)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(match.row.label)
+                            Text(match.file.lastPathComponent
+                                 + (match.exact ? "" : ", close match")
+                                 + (match.row.customPath != nil ? ", replaces the current custom icon" : ""))
+                                .font(.caption)
+                                .foregroundStyle(match.exact ? Color.secondary : Color.orange)
+                        }
+                    }
+                }
+                if !unmatched.isEmpty {
+                    Section("Not matched to any app") {
+                        Text(unmatched.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary)
+                        Text("Rename an image to the app's name, or use Choose image... on that app's row.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            HStack {
+                Spacer()
+                Button("Cancel", action: close).keyboardShortcut(.cancelAction)
+                Button("Use \(chosen.count) icon\(chosen.count == 1 ? "" : "s")") {
+                    model.setIcons(matches.filter { chosen.contains($0.id) }.map { (key: $0.row.key, path: $0.file.path) })
+                    close()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(chosen.isEmpty)
+            }
+        }
+        .padding(16)
+        .frame(width: 520, height: 480)
+        .onAppear {
+            let result = model.matchIcons(inFolder: folder)
+            matches = result.matches
+            unmatched = result.unmatched
+            chosen = Set(result.matches.map { $0.id })
+            loaded = true
+        }
+    }
+
+    private func currentIcon(_ row: SettingsModel.IconRow) -> NSImage {
+        row.customPath.flatMap { NSImage(contentsOfFile: ($0 as NSString).expandingTildeInPath) } ?? row.appIcon
     }
 }
