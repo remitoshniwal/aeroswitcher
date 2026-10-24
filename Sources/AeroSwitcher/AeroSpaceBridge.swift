@@ -409,6 +409,11 @@ final class AeroSpaceEventStream: @unchecked Sendable {
     var onMode: ((String?) -> Void)?
     // true = got a sign of life from AeroSpace, false = connection lost.
     var onConnection: ((Bool) -> Void)?
+    // A window got focus: its id and the workspace it is in. This is what
+    // the recent order (MRUTracker) is built from, so the hook line in
+    // .aerospace.toml isn't needed. AeroSpace also sends the current focus
+    // once on every new connection.
+    var onFocus: ((_ windowID: String, _ workspace: String) -> Void)?
 
     private var wanted = false
     private var process: Process?
@@ -449,7 +454,7 @@ final class AeroSpaceEventStream: @unchecked Sendable {
         guard wanted, process == nil else { return }
         let child = Process()
         child.executableURL = URL(fileURLWithPath: aerospacePath)
-        child.arguments = ["subscribe", "focused-workspace-changed", "mode-changed"]
+        child.arguments = ["subscribe", "focused-workspace-changed", "mode-changed", "focus-changed"]
         let pipe = Pipe()
         child.standardOutput = pipe
         child.standardError = pipe
@@ -499,6 +504,11 @@ final class AeroSpaceEventStream: @unchecked Sendable {
             if let workspace = json["workspace"] as? String { onWorkspace?(workspace) }
         case "mode-changed":
             onMode?(json["mode"] as? String)
+        case "focus-changed":
+            // windowId is a number in the JSON. It can be missing when
+            // focus lands on an empty workspace, nothing to record then.
+            let windowID = (json["windowId"] as? NSNumber)?.stringValue ?? (json["windowId"] as? String)
+            if let windowID, let workspace = json["workspace"] as? String { onFocus?(windowID, workspace) }
         default:
             break
         }

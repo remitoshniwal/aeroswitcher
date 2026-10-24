@@ -92,7 +92,10 @@ Task { @MainActor in
     hotkeys?.start()
 
     // The menu bar icon (workspace name and menu), see MenuBar.swift.
-    menuBar = MenuBarController()
+    // It also hands every focus event to the recent order (MRUTracker).
+    menuBar = MenuBarController(onFocus: { windowID, workspace in
+        c.mru?.recordFocus(windowID: windowID, workspace: workspace)
+    })
 
     // From here on, saving config.json reloads it, and `pkill -HUP
     // AeroSwitcher` reloads it together with AeroSpace's config.

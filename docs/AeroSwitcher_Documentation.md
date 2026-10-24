@@ -57,11 +57,17 @@ Screenshots are captured directly at the small size they'll actually be shown at
 
 ### Remembering which window you used last
 
-`MRUTracker` reads from `/tmp/aerospace-mru/`, one small log file per workspace (`Core.log`, `Gaming.log`, and so on), that AeroSpace itself appends a window ID to every time focus changes within that workspace (set up via the `on-focus-changed` line in `~/.aerospace.toml`). This is how the switcher knows to put your most recently used windows first, in the same order the real Cmd+Tab does, instead of some arbitrary order.
+`MRUTracker` keeps one small log file per workspace (`Core.log`, `Gaming.log`, and so on), one window ID per line, newest last. This is how the switcher puts your most recently used windows first, in the same order the real Cmd+Tab does, instead of some arbitrary order.
 
-It's split per workspace rather than one shared log for the whole Mac for two reasons. First, each file grows by one line every focus change forever with nothing to trim it, so `MRUTracker` only ever keeps the most recent 300 window IDs per workspace and rewrites a file back down to size once it's grown enough to be worth the trouble, the same fix as before, just scoped per file now. Second, and more importantly, it fixes a real accuracy problem: with one shared history, heavily switching windows in whatever workspace you're using right now could push an older, less-visited workspace's own window IDs out of the remembered set entirely, so by the time you switched back to it, its recency order would already be forgotten. Separate files mean each workspace only ever competes with its own past, not everyone else's.
+**Where the IDs come from.** AeroSwitcher already keeps one `aerospace subscribe` connection open for the menu bar icon. It now also asks for AeroSpace's `focus-changed` events, which carry the window ID and the workspace (`{"_event":"focus-changed","windowId":69892,"workspace":"Core"}`), and appends each one to `/tmp/aeroswitcher-recent/<Workspace>.log` (written on a background queue, so the Cmd+Tab hook never waits for a file). Nothing has to be added to `.aerospace.toml`, which is the point: nobody else has to edit their config. AeroSpace also sends the current focus once on every new connection.
 
-Since AeroSpace's hook only hands the callback the window ID directly, not which workspace it's in, the `on-focus-changed` command makes one extra `aerospace list-workspaces --focused` call to figure out which file to append to. That's a small bit of extra background work on every ordinary window click (not just when the switcher opens), but it runs fire-and-forget and never blocks anything you're doing, so it isn't something you'd notice.
+**The old hook still works.** The `on-focus-changed` line in `~/.aerospace.toml` writes the same kind of log to `/tmp/aerospace-mru/<Workspace>.log`. If both logs exist for a workspace, the one written to most recently is read, because both record the same events: if you remove the hook line, its log stops growing and AeroSwitcher's own takes over; if AeroSwitcher wasn't running for a while, the hook's log is the one that kept going. An AeroSpace without the `subscribe` command can only use the hook (the Setup window then shows a Recent order row with the line to add).
+
+Both folders are in `/tmp` on purpose: window IDs mean nothing after a restart, and macOS empties `/tmp` then.
+
+Each log is trimmed the same way: `MRUTracker` only keeps the most recent 300 window IDs per workspace and rewrites a file back down to size once it's grown enough to be worth the trouble. It's split per workspace rather than one shared log for two reasons. First, each file grows by one line every focus change, so the trimming has to be cheap. Second, and more importantly: with one shared history, heavily switching windows in whatever workspace you're using right now could push an older, less-visited workspace's own window IDs out of the remembered set entirely. Separate files mean each workspace only ever competes with its own past.
+
+Checked on 2026-10-25: after a series of focus changes from the command line, AeroSwitcher's log was identical to the last lines of the hook's log, for every workspace that had entries.
 
 ### Launcher tiles for apps that aren't open yet
 
@@ -209,7 +215,7 @@ The rows:
 - **AeroSpace running**: asks `aerospace list-workspaces --focused`. Not running, or turned off (with an Enable AeroSpace button). It can't tell whether AeroSpace has its own Accessibility permission.
 - **Input Monitoring**: macOS's answer, and whether the Cmd+Tab hook (the event tap) really started. Button: Open Input Monitoring.
 - **Screen Recording**: macOS's answer. Button: Open Screen Recording. If AeroSwitcher is already in the list and switched on but still marked, the hint says to remove it with the minus button and add it again (this can happen after the app's signature changes).
-- **Recent order** (optional, shown yellow, never triggers the popup): looks for an `on-focus-changed` line containing `aerospace-mru` in AeroSpace's config file. Buttons: Copy line, Open config. If the config already has its own `on-focus-changed` line, the row says to add the command inside that line's brackets instead, because two lines with the same key make AeroSpace refuse the file. AeroSwitcher can read the file but not whether AeroSpace has loaded it.
+- **Recent order**: with a current AeroSpace (it has `aerospace subscribe`) this is a tick, AeroSwitcher keeps the history itself and nothing needs adding to AeroSpace's config. Only for an old AeroSpace without `subscribe` is it an optional yellow row (never triggers the popup) that looks for an `on-focus-changed` line containing `aerospace-mru` in AeroSpace's config file. Buttons: Copy line, Open config. If the config already has its own `on-focus-changed` line, the row says to add the command inside that line's brackets instead, because two lines with the same key make AeroSpace refuse the file. AeroSwitcher can read the file but not whether AeroSpace has loaded it.
 - **Accessibility** is not checked. It belongs to AeroSpace, and one app can't read another's permissions. The window only has a button for that page in System Settings.
 
 While the window is open it checks again every 2 seconds and whenever you come back to it, so a cross turns into a tick by itself. If Input Monitoring is granted while the app is running, AeroSwitcher tries to start the Cmd+Tab hook again itself. After you open a System Settings page from a row and come back, a still-red row shows a hint and a **Restart AeroSwitcher** button: macOS often applies Screen Recording only after a restart. Restart waits for the old copy to exit and starts the app again.
@@ -329,7 +335,7 @@ This is AeroSpace's own config file, separate from AeroSwitcher, but AeroSwitche
 
 Finder is deliberately left out of this block, since it's used across every workspace and forcing it into one would just fight you.
 
-**The MRU logs**: `on-focus-changed` appends the newly focused window's ID to that workspace's own file under `/tmp/aerospace-mru/` every time focus changes. This is the only reason AeroSwitcher can show your most-recently-used windows first.
+**The MRU logs**: `on-focus-changed` appends the newly focused window's ID to that workspace's own file under `/tmp/aerospace-mru/` every time focus changes. AeroSwitcher no longer needs this line (it records focus itself from `aerospace subscribe`, see **Remembering which window you used last**), it is only needed with an AeroSpace that has no `subscribe`. Keeping it is harmless.
 
 `auto-reload-config = true` means saving this file applies changes immediately, no need to restart AeroSpace.
 

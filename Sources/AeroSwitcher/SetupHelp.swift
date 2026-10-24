@@ -66,6 +66,11 @@ struct SetupStatus: Equatable {
 
     var inputMonitoringOK: Bool { inputPreflight && tapRunning }
 
+    // With `aerospace subscribe` (any recent AeroSpace) AeroSwitcher keeps
+    // the recent order itself and nothing needs adding to AeroSpace's
+    // config. Only an old AeroSpace without it still needs the hook line.
+    var recentOrderNeedsHook: Bool { cliPath != nil && !subscribeSupported }
+
     // AeroSpace was installed after AeroSwitcher started, somewhere other
     // than where the start-up guess pointed, so all its calls still use the
     // wrong path until a restart.
@@ -87,10 +92,8 @@ struct SetupStatus: Equatable {
         if case .disabled = aerospace { return true }
         if case .unknown = aerospace { return true }
         if cliPath != nil && !subscribeSupported { return true }
-        switch hook {
-        case .present, .notChecked: return false
-        default: return true
-        }
+        if recentOrderNeedsHook && hook != .present { return true }
+        return false
     }
 
     var summary: String {
@@ -379,7 +382,10 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
             rows.append(SetupRow(id: "installed", mark: .bad, title: "AeroSpace installed", detail: detail,
                 codeBlock: Self.installCommand,
                 buttons: [
-                    SetupButton(title: "Get AeroSpace") { NSWorkspace.shared.open(URL(string: Self.aerospaceGuideURL)!) },
+                    SetupButton(title: "Get AeroSpace") {
+                        print("Setup: open \(Self.aerospaceGuideURL)")
+                        NSWorkspace.shared.open(URL(string: Self.aerospaceGuideURL)!)
+                    },
                     SetupButton(title: "Copy install command") { Self.copy(Self.installCommand) },
                 ]))
         }
@@ -405,6 +411,7 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
                 detail: "Not running. No windows will show until it is.",
                 hint: "Starting AeroSpace re-applies its window rules, so windows may move.",
                 buttons: [SetupButton(title: "Open AeroSpace") {
+                    print("Setup: open AeroSpace")
                     if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "bobko.aerospace") {
                         NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
                     } else {
@@ -454,38 +461,45 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
         let openConfig = SetupButton(title: "Open config") { [weak self] in
             if let path = self?.latest?.configPath ?? Optional(NSHomeDirectory() + "/.aerospace.toml"),
                FileManager.default.fileExists(atPath: path) {
+                print("Setup: open \(path)")
                 NSWorkspace.shared.open(URL(fileURLWithPath: path))
             } else {
+                print("Setup: no AeroSpace config file to open")
                 NSSound.beep()
             }
         }
-        switch s.hook {
-        case .present:
-            rows.append(SetupRow(id: "hook", mark: .good, title: "Recent order", detail: "Windows are listed most recently used first."))
-        case .notChecked:
-            rows.append(SetupRow(id: "hook", mark: .idle, title: "Recent order", detail: "Checked once AeroSpace is installed."))
-        case .missing:
-            rows.append(SetupRow(id: "hook", mark: .warning, title: "Recent order",
-                detail: "Optional. Add this line to your AeroSpace config, outside any [section], to list windows most recently used first.",
-                hint: "AeroSwitcher can read the file, but not whether AeroSpace has loaded it. Reload AeroSpace's config after saving.",
-                codeBlock: recencyHookLine,
-                buttons: [SetupButton(title: "Copy line") { Self.copy(recencyHookLine) }, openConfig]))
-        case .conflict:
-            rows.append(SetupRow(id: "hook", mark: .warning, title: "Recent order",
-                detail: "Optional. Your config already has an on-focus-changed line. Add this command to its list instead of adding a second line, which AeroSpace would reject.",
-                codeBlock: recencyHookCommand,
-                buttons: [SetupButton(title: "Copy command") { Self.copy(recencyHookCommand) }, openConfig]))
-        case .noConfig:
-            rows.append(SetupRow(id: "hook", mark: .warning, title: "Recent order",
-                detail: "Optional. No AeroSpace config file was found. Create ~/.aerospace.toml with this line.",
-                codeBlock: recencyHookLine,
-                buttons: [SetupButton(title: "Copy line") { Self.copy(recencyHookLine) }]))
+        if s.cliPath != nil && !s.recentOrderNeedsHook {
+            rows.append(SetupRow(id: "hook", mark: .good, title: "Recent order",
+                detail: "AeroSwitcher keeps track of the window you used last itself. Nothing to set up."))
+        } else {
+            switch s.hook {
+            case .present:
+                rows.append(SetupRow(id: "hook", mark: .good, title: "Recent order", detail: "Windows are listed most recently used first."))
+            case .notChecked:
+                rows.append(SetupRow(id: "hook", mark: .idle, title: "Recent order", detail: "Checked once AeroSpace is installed."))
+            case .missing:
+                rows.append(SetupRow(id: "hook", mark: .warning, title: "Recent order",
+                    detail: "Optional. Add this line to your AeroSpace config, outside any [section], to list windows most recently used first.",
+                    hint: "AeroSwitcher can read the file, but not whether AeroSpace has loaded it. Reload AeroSpace's config after saving.",
+                    codeBlock: recencyHookLine,
+                    buttons: [SetupButton(title: "Copy line") { Self.copy(recencyHookLine) }, openConfig]))
+            case .conflict:
+                rows.append(SetupRow(id: "hook", mark: .warning, title: "Recent order",
+                    detail: "Optional. Your config already has an on-focus-changed line. Add this command to its list instead of adding a second line, which AeroSpace would reject.",
+                    codeBlock: recencyHookCommand,
+                    buttons: [SetupButton(title: "Copy command") { Self.copy(recencyHookCommand) }, openConfig]))
+            case .noConfig:
+                rows.append(SetupRow(id: "hook", mark: .warning, title: "Recent order",
+                    detail: "Optional. No AeroSpace config file was found. Create ~/.aerospace.toml with this line.",
+                    codeBlock: recencyHookLine,
+                    buttons: [SetupButton(title: "Copy line") { Self.copy(recencyHookLine) }]))
+            }
         }
 
         // 6. Old AeroSpace
         if s.cliPath != nil && !s.subscribeSupported {
             rows.append(SetupRow(id: "old", mark: .warning, title: "AeroSpace is out of date",
-                detail: "The menu bar name is checked once a second. brew upgrade --cask aerospace updates it."))
+                detail: "It has no subscribe command, so the menu bar name is checked once a second and the recent order needs the line from the Recent order row. brew upgrade --cask aerospace updates it."))
         }
         return rows
     }
@@ -575,12 +589,15 @@ struct SetupView: View {
 
     private func header(_ status: SetupStatus) -> some View {
         let missing = !status.requiredMissing.isEmpty
-        let title = missing ? "Setup needed" : (help.welcome ? "Welcome to AeroSwitcher" : "You're all set")
+        let warnings = status.hasWarnings
+        let title = missing ? "Setup needed"
+            : (help.welcome ? "Welcome to AeroSwitcher" : (warnings ? "Almost set" : "You're all set"))
         let subtitle = missing
             ? "Fix the items marked with a cross. They update by themselves."
             : (help.welcome
                 ? "It lives in the menu bar. Click the workspace name there for its menu, or press Cmd+Tab to try it."
-                : "Everything AeroSwitcher needs is in place.")
+                : (warnings ? "Nothing required is missing. The items marked with ! are worth a look."
+                            : "Everything AeroSwitcher needs is in place."))
         return VStack(alignment: .leading, spacing: 6) {
             Text(title).font(.title2).bold()
             Text(subtitle).foregroundStyle(.secondary)

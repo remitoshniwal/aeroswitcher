@@ -32,7 +32,7 @@ The short version is below. For a step-by-step walkthrough from a blank Mac, see
 brew install --cask nikitabobko/tap/aerospace
 ```
 
-**2. Add this line to your `~/.aerospace.toml`** at the top level, not inside any section. AeroSpace writes down which window you focus, and AeroSwitcher reads that to put your most recent window first. Without it, the switcher still works, but not in recently-used order.
+**2. Optional, only for an AeroSpace without the `subscribe` command: add this line to your `~/.aerospace.toml`** at the top level, not inside any section. AeroSwitcher keeps its own record of which window you used last from AeroSpace's `subscribe` events, so most people can skip this. The line is only for an AeroSpace too old to have `subscribe`.
 
 ```toml
 on-focus-changed = ['exec-and-forget /bin/sh -c "mkdir -p /tmp/aerospace-mru && echo $AEROSPACE_WINDOW_ID >> /tmp/aerospace-mru/$(aerospace list-workspaces --focused).log"']

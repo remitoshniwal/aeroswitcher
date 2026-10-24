@@ -37,9 +37,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     // state, so this is right even after AeroSpace restarts.
     private var aerospaceEnabled = true
 
-    override init() {
+    // `onFocus` gets every "this window now has focus" event of the one
+    // `aerospace subscribe` connection this icon already keeps (see main.swift).
+    init(onFocus: ((String, String) -> Void)? = nil) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
+        stream.onFocus = onFocus
         // Remembers where in the bar you dragged the icon (Cmd+drag).
         statusItem.autosaveName = "AeroSwitcher"
         let menu = NSMenu()
@@ -327,7 +330,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         case .disabled, .unknown: runningMark = "!"
         }
         row("AeroSpace running", mark: runningMark, opensSetup: true)
-        row("Recent order", mark: status.hook == .present || status.hook == .notChecked ? "✓" : "!", opensSetup: true)
+        row("Recent order", mark: status.recentOrderNeedsHook && status.hook != .present ? "!" : "✓", opensSetup: true)
         submenu.addItem(.separator())
         submenu.addItem(item("Setup...", #selector(setupHelpClicked)))
         parent.submenu = submenu
