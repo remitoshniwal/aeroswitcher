@@ -142,6 +142,8 @@ pkill AeroSwitcher                             # stop the running copy (or Quit 
 AeroSwitcher.app/Contents/MacOS/AeroSwitcher   # run it from Terminal to see its log output
 ```
 
+`build.sh` writes the build number and commit into the app (`Version: 0.9.0 (build 57, a1b2c3d)` at the end of its output); the version itself is the one line in `Info.plist` you edit by hand. The About panel in the menu shows all of it.
+
 If Cmd+Tab stops responding or thumbnails go blank after a rebuild, check the two permissions first. The build prints one expected warning about `fullPath(forApplication:)` being deprecated. It's intentional, and the [documentation](docs/AeroSwitcher_Documentation.md) explains why.
 
 ## Credits

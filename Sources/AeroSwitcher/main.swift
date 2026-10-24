@@ -8,6 +8,8 @@ import ScreenCaptureKit
 // buffering here means every print() appears the moment it runs.
 setvbuf(stdout, nil, _IOLBF, 0)
 
+print(appVersionText())
+
 // MARK: - One copy only
 //
 // Two AeroSwitchers at once would both swallow Cmd+Tab and both put an icon

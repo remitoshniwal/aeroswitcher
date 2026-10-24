@@ -576,17 +576,64 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     // MARK: About, Quit
 
+    // The standard macOS About panel. It fills in the icon, the name, the
+    // "Version 0.9.0 (57)" line and the copyright line (NSHumanReadableCopyright
+    // in Info.plist) by itself; everything in the grey scrolling text below
+    // them is the `credits` built here. To change what it says, change the
+    // lines in `showAbout`. The version numbers come from build.sh, see
+    // appVersion() in Config.swift.
     @objc private func aboutClicked() {
         print("Menu: about")
+        // AeroSpace is asked off the main thread first (the same thread runs
+        // the Cmd+Tab hook, and a slow AeroSpace used to freeze it for up to
+        // 2 seconds here). The panel opens once there's an answer.
+        Task.detached {
+            let aerospaceText = getAeroSpaceVersionText()
+            await MainActor.run { self.showAbout(aerospaceText: aerospaceText) }
+        }
+    }
+
+    // `aerospace --version` prints two lines (the command's version and the
+    // running app's). The app's is the one that matters, so show that one.
+    private func aerospaceVersionLine(_ text: String) -> String {
+        if let range = text.range(of: "server version: ") {
+            let version = text[range.upperBound...].split(whereSeparator: { $0 == " " || $0 == "\n" }).first ?? ""
+            if !version.isEmpty && !version.hasPrefix("Can't") { return "AeroSpace \(version)" }
+        }
+        if let range = text.range(of: "client version: ") {
+            let version = text[range.upperBound...].split(whereSeparator: { $0 == " " || $0 == "\n" }).first ?? ""
+            if !version.isEmpty { return "AeroSpace \(version) (not running)" }
+        }
+        return "AeroSpace isn't reachable"
+    }
+
+    private func showAbout(aerospaceText: String) {
+        let repoURL = "https://github.com/remitoshniwal/aeroswitcher"
+        let font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+        let plain: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.labelColor]
         let credits = NSMutableAttributedString(
-            string: "A Cmd+Tab for the current AeroSpace workspace.\n\n" + getAeroSpaceVersionText()
-                + "\n\nhttps://github.com/remitoshniwal/aeroswitcher",
-            attributes: [.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
-                         .foregroundColor: NSColor.labelColor])
-        credits.addAttribute(.link, value: URL(string: "https://github.com/remitoshniwal/aeroswitcher")!,
-                             range: (credits.string as NSString).range(of: "https://github.com/remitoshniwal/aeroswitcher"))
+            string: "A Cmd+Tab for the current AeroSpace workspace.\n\n", attributes: plain)
+        func line(_ text: String, link: (word: String, url: String)? = nil) {
+            let start = credits.length
+            credits.append(NSAttributedString(string: text + "\n", attributes: plain))
+            if let link {
+                let range = (credits.string as NSString).range(of: link.word, range: NSRange(location: start, length: text.count))
+                credits.addAttribute(.link, value: URL(string: link.url)!, range: range)
+            }
+        }
+        if let v = appVersion() { line("Commit \(v.commit)") }
+        line(aerospaceVersionLine(aerospaceText))
+        line("")
+        line("Source code on GitHub", link: ("Source code on GitHub", repoURL))
+        line("MIT License", link: ("MIT License", repoURL + "/blob/main/LICENSE"))
+
+        var options: [NSApplication.AboutPanelOptionKey: Any] = [.credits: credits]
+        if let v = appVersion() {
+            options[.applicationVersion] = v.version
+            options[.version] = v.build
+        }
         NSApp.activate(ignoringOtherApps: true)
-        NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
+        NSApp.orderFrontStandardAboutPanel(options: options)
     }
 
     @objc private func quitClicked() {

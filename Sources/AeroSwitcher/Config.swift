@@ -156,6 +156,22 @@ func configFileURL() -> URL {
     appSupportDirectory().appendingPathComponent("config.json")
 }
 
+// The version of this build, read from the app's own Info.plist. Where each
+// part comes from (see build.sh): the version is typed by hand in Info.plist,
+// the build number is the git commit count, the commit is the short git hash
+// (with "-dirty" when the build had uncommitted changes). Run without an app
+// bundle (swift run) there is no Info.plist, so it says "dev build".
+func appVersion() -> (version: String, build: String, commit: String)? {
+    guard let info = Bundle.main.infoDictionary,
+          let version = info["CFBundleShortVersionString"] as? String else { return nil }
+    return (version, info["CFBundleVersion"] as? String ?? "?", info["AeroSwitcherCommit"] as? String ?? "?")
+}
+
+func appVersionText() -> String {
+    guard let v = appVersion() else { return "AeroSwitcher dev build" }
+    return "AeroSwitcher \(v.version) (build \(v.build), \(v.commit))"
+}
+
 func writeConfig(_ config: SwitcherConfig, to url: URL) {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

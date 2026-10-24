@@ -181,7 +181,8 @@ The menu, top to bottom:
 - **Permissions**: a tick, a cross or a `!` for Input Monitoring, Screen Recording, AeroSpace installed, AeroSpace running and Recent order, from the same check as the Setup window. Clicking a cross opens the right page in System Settings (or the Setup window). **Setup...** at the bottom opens the Setup window. These checks only look, they never pop up a permission request.
 - **Launch at login**: see **Packaging it as your daily-use app**, below.
 - **Hide AeroSpace's icon**: see below.
-- **About AeroSwitcher**, **Quit AeroSwitcher**. (Before this menu existed, quitting needed `pkill AeroSwitcher` in Terminal.)
+- **About AeroSwitcher**: the standard macOS About panel with the version and build number, the commit, AeroSpace's version, a link to the source code and the MIT license, and the copyright line. AeroSpace is asked for its version in the background first, so the panel can take up to 2 seconds to appear when AeroSpace is slow, but nothing freezes while it waits.
+- **Quit AeroSwitcher**. (Before this menu existed, quitting needed `pkill AeroSwitcher` in Terminal.)
 
 **How the name stays up to date.** AeroSwitcher keeps one `aerospace subscribe focused-workspace-changed mode-changed` running in the background (`AeroSpaceEventStream` in `AeroSpaceBridge.swift`). AeroSpace prints a line the moment you switch, so the name changes instantly, nothing is checked over and over, and nothing needs adding to `.aerospace.toml`. If AeroSpace quits or restarts, that connection ends; AeroSwitcher tries again every 2 seconds and gets the current workspace again on reconnect. An AeroSpace too old to have `subscribe` gets a check once a second instead. The menu itself asks AeroSpace fresh every time it opens, with a time limit on each question, so a hung AeroSpace can't freeze Cmd+Tab.
 
@@ -371,6 +372,16 @@ This part isn't AeroSwitcher code at all, it's entirely `~/.aerospace.toml` plus
 - **The `"workspaces"` list in `~/Library/Application Support/AeroSwitcher/config.json` is a manual copy** of the workspace groupings in `aerospace.toml`. The two can drift apart if only one gets updated.
 - **No vertical scrolling within a normal switcher page.** If a single Cmd+Tab page somehow still ends up too tall (extremely unlikely at normal window counts, since `maxRows` already caps it), there's no vertical scroll as a fallback, only pagination. The Cmd+\` overview does have one, for when a single workspace is too big for the panel (see the overview section above), and it scrolls with S/W (macOS 15+) or two fingers.
 - **A deprecation warning on every build, and that's expected.** `build.sh` will print a warning about `fullPath(forApplication:)` being deprecated, pointing at `resolvedAppIcon` in `Config.swift` (the function that finds a QUIT app's real icon by name, for the greyed launcher row's automatic icons). This is intentional, not a mistake left behind: Apple's suggested replacement needs a bundle identifier, but config.json only ever has app names/paths (`match`/`open`), never bundle identifiers, so there's no non-deprecated API that does the same name-based lookup. The build still succeeds and the app works normally, this warning is cosmetic. The only way to avoid it entirely would be replacing this one lookup with a manual scan of `/Applications`, `/System/Applications`, and `~/Applications` instead of asking macOS directly, which trades a clean build log for missing apps installed in less common locations, judged not worth it.
+
+## Version numbers
+
+Three numbers, shown in the About panel and printed on the first line when the app starts (`AeroSwitcher 0.9.0 (build 57, a1b2c3d)`):
+
+- **Version** (`0.9.0`): the only one typed by hand, as `CFBundleShortVersionString` in `Info.plist`. Raise the middle number when a phase ships and the last one for fixes. 1.0.0 is for when strangers can install it (Phase 12).
+- **Build** (`57`): the number of git commits so far (`git rev-list --count HEAD`). `build.sh` writes it into the copy of `Info.plist` inside the app (`CFBundleVersion`), so the file in the repo never changes because of a build. The build is made before its own commit, so a build made from a change shows the count from before that commit.
+- **Commit** (`a1b2c3d`): the short git hash, with `-dirty` added when there were uncommitted changes, so a test build can be told apart from a committed one (`AeroSwitcherCommit` in the bundle's `Info.plist`).
+
+Built without git (for example from a ZIP download), the build still works and says build 0, commit `unknown`. Run without an app bundle (`swift run`) it says "dev build". The code that reads them is `appVersion()` in `Config.swift`.
 
 ## Permissions this app needs
 
