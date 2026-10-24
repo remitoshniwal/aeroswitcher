@@ -59,7 +59,7 @@ The first time you open it, macOS may say it can't verify the developer. Right-c
 - **Input Monitoring**, so it can catch Cmd+Tab
 - **Screen Recording**, for the window thumbnails
 
-Then quit and reopen AeroSwitcher, hold Cmd and press Tab. You should see your current workspace's windows.
+If anything is missing, AeroSwitcher opens a Setup window that says what and has a button for each fix. Then quit and reopen AeroSwitcher, hold Cmd and press Tab. You should see your current workspace's windows.
 
 **6. Optional: start it at login.** Open `/Applications/AeroSwitcher.app` and tick **Launch at login** in its menu bar menu.
 
@@ -124,7 +124,8 @@ aeroswitcher/
 │   ├── Keybinds.swift               Key names to key codes
 │   ├── HotkeyInterception.swift     Catching Cmd+Tab before macOS does
 │   ├── MenuBar.swift                The menu bar icon and its menu
-│   └── SettingsWindow.swift         The settings window
+│   ├── SettingsWindow.swift         The settings window
+│   └── SetupHelp.swift              Setup checks and the Setup window
 ├── aerospace/                       Optional AeroSpace config and full-screen scripts
 ├── sync-aerospace.sh                Copies the live AeroSpace files into aerospace/
 ├── check-drift.js                   Finds apps set up in .aerospace.toml but not config.json, or the reverse

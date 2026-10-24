@@ -21,7 +21,15 @@ class HotkeyManager {
         self.controller = controller
     }
 
-    func start() {
+    // True once the tap exists. The setup help window reads this.
+    var isRunning: Bool { eventTap != nil }
+
+    // `retry` is the setup help window trying again after the user granted
+    // Input Monitoring. It does nothing when the tap already exists (a
+    // second tap would handle every key twice), and stays quiet when it
+    // fails again, since it can be called every couple of seconds.
+    func start(retry: Bool = false) {
+        guard eventTap == nil else { return }
         // keyUp is only needed for one thing: knowing when S/W is let go
         // after holding it to glide through the overview (see the keyUp
         // block in handle()). Every other key release passes straight
@@ -51,15 +59,28 @@ class HotkeyManager {
             callback: callback,
             userInfo: selfPtr
         ) else {
-            print("Could not create the event tap. Check System Settings > Privacy & Security > Input Monitoring, AeroSwitcher needs to be allowed there.")
+            if !retry {
+                print("Could not create the event tap. Check System Settings > Privacy & Security > Input Monitoring, AeroSwitcher needs to be allowed there.")
+                logPermissionState(tapCreated: false)
+            }
             return
         }
 
         self.eventTap = tap
+        if !retry { logPermissionState(tapCreated: true) }
         let runLoopSource = CFMachPortCreateRunLoopSource(nil, tap, 0)
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
         print("Cmd+Tab is now handled by AeroSwitcher. Press Ctrl+C here to stop and restore normal Cmd+Tab.")
+    }
+
+    // What macOS says about the permissions next to whether the tap could be
+    // made. Printed at launch so it's possible to see, from a copy where a
+    // permission really is missing, which of them the tap actually depends
+    // on. All three are look-only calls: none of them can pop a dialog
+    // (AXIsProcessTrusted without the "prompt" option never does).
+    private func logPermissionState(tapCreated: Bool) {
+        print("Setup check at launch: Input Monitoring preflight=\(CGPreflightListenEventAccess()), Accessibility trusted=\(AXIsProcessTrusted()), event tap created=\(tapCreated)")
     }
 
     func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {

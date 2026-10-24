@@ -9,16 +9,43 @@ import Cocoa
 // build works on Remi's Mac, an Apple Silicon friend's Mac, or an Intel
 // one, without anyone having to edit this file.
 let aerospacePath: String = {
-    let candidates = [
-        "/opt/homebrew/bin/aerospace",  // Homebrew on Apple Silicon
-        "/usr/local/bin/aerospace",     // Homebrew on Intel
-    ]
-    for path in candidates where FileManager.default.fileExists(atPath: path) {
-        return path
+    if let path = findAerospaceCLI() { return path }
+    if let override = testAerospaceOverride() {
+        print("Test setup: the fake aerospace at \(override) doesn't exist, so AeroSpace counts as not installed.")
+        return override
     }
-    print("Couldn't find the aerospace CLI at any of the usual locations (\(candidates.joined(separator: ", "))). AeroSwitcher needs AeroSpace (https://github.com/nikitabobko/AeroSpace) installed to do anything at all.")
-    return candidates[0]  // fall back to the most common one so every aerospace call below fails the same obvious way, instead of crashing differently depending on which one ran first
+    print("Couldn't find the aerospace CLI at any of the usual locations (\(aerospaceCandidatePaths.joined(separator: ", "))). AeroSwitcher needs AeroSpace (https://github.com/nikitabobko/AeroSpace) installed to do anything at all.")
+    return aerospaceCandidatePaths[0]  // fall back to the most common one so every aerospace call below fails the same obvious way, instead of crashing differently depending on which one ran first
 }()
+
+let aerospaceCandidatePaths = [
+    "/opt/homebrew/bin/aerospace",  // Homebrew on Apple Silicon
+    "/usr/local/bin/aerospace",     // Homebrew on Intel
+]
+
+// TEST ONLY. Pointing this at a fake `aerospace` script lets the setup help
+// window be tested for "AeroSpace not installed / not running / disabled"
+// without touching the real AeroSpace. It is ignored unless
+// AEROSWITCHER_CONFIG_DIR is set too (that variable already means "this is a
+// test copy"), so it can never change a normal run.
+func testAerospaceOverride() -> String? {
+    let environment = ProcessInfo.processInfo.environment
+    guard environment["AEROSWITCHER_CONFIG_DIR"] != nil,
+          let path = environment["AEROSWITCHER_AEROSPACE_PATH"], !path.isEmpty else { return nil }
+    return path
+}
+
+// The aerospace command line tool if it exists, nil if it doesn't. Unlike
+// `aerospacePath` it never falls back to a guess, so "installed or not" can
+// be told apart. Looked at again on every call, which is what lets the
+// setup window notice AeroSpace being installed while AeroSwitcher is
+// already running.
+func findAerospaceCLI() -> String? {
+    if let override = testAerospaceOverride() {
+        return FileManager.default.fileExists(atPath: override) ? override : nil
+    }
+    return aerospaceCandidatePaths.first { FileManager.default.fileExists(atPath: $0) }
+}
 
 // MARK: - AeroSpace bridge
 

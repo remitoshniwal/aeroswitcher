@@ -192,6 +192,11 @@ final class ConfigReport {
     }
 }
 
+// True when this launch created config.json because it didn't exist yet,
+// which is the best sign there is of a first launch ever. Used only by the
+// setup help window; set while `settings` is created at start-up.
+var firstRunThisLaunch = false
+
 // Reads and decodes config.json. nil means it couldn't be used at all (the
 // reason is in `report`), and the caller decides what to fall back to.
 func readConfigFile(report: ConfigReport) -> SwitcherConfig? {
@@ -202,6 +207,7 @@ func readConfigFile(report: ConfigReport) -> SwitcherConfig? {
         // format from scratch. "workspaces" starts empty on purpose; see
         // AeroSwitcher_Documentation.md for a filled-in example to copy from.
         writeConfig(defaultSwitcherConfig, to: url)
+        firstRunThisLaunch = true  // the setup help window shows its welcome text (SetupHelp.swift)
         print("Created \(url.path). Add your own workspace apps to it (see AeroSwitcher_Documentation.md for an example) and save it, AeroSwitcher picks up changes by itself.")
         return defaultSwitcherConfig
     }

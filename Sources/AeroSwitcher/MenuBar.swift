@@ -72,6 +72,13 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                 self.refreshSnapshot()
             }
         }
+        // The Permissions item follows the setup check (SetupHelp.swift).
+        NotificationCenter.default.addObserver(forName: .setupStatusChanged, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let menu = self.statusItem.menu else { return }
+                self.buildMenu(menu)
+            }
+        }
         // Put the divider back if AeroSpace's icon was hidden last time.
         if hideAeroSpaceIcon { showDivider(wide: true) }
 
@@ -184,6 +191,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         guard menu === statusItem.menu else { return }
         buildMenu(menu)
         refreshSnapshot()
+        SetupHelp.shared.refresh()
     }
 
     private func buildMenu(_ menu: NSMenu) {
@@ -240,7 +248,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         openConfig.keyEquivalentModifierMask = [.command, .option]
         openConfig.isAlternate = true
         menu.addItem(openConfig)
-        menu.addItem(permissionsItem(aerospaceReachable: reachable || disabled))
+        menu.addItem(permissionsItem())
         let login = item("Launch at login", #selector(launchAtLoginClicked))
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(login)
@@ -275,38 +283,69 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     // MARK: Permissions
 
-    // CGPreflight... only LOOK at the permission, they never pop up a
-    // permission dialog (the "Request" versions would, so they're avoided).
-    // Accessibility isn't listed: AeroSwitcher doesn't use it, AeroSpace and
-    // the maximize scripts do, and a permission can't be read for another app.
-    private func permissionsItem(aerospaceReachable: Bool) -> NSMenuItem {
-        let inputMonitoring = CGPreflightListenEventAccess()
-        let screenRecording = CGPreflightScreenCaptureAccess()
-        let allGood = inputMonitoring && screenRecording && aerospaceReachable
+    // Built from the same check as the setup help window (SetupHelp.swift),
+    // so the two always agree. Everything there only LOOKS at permissions,
+    // nothing pops up a macOS dialog. The first check runs at launch; until
+    // it has answered the submenu says so.
+    private func permissionsItem() -> NSMenuItem {
+        guard let status = SetupHelp.shared.statusForMenu() else {
+            let parent = NSMenuItem(title: "Permissions", action: nil, keyEquivalent: "")
+            let submenu = NSMenu()
+            let checking = NSMenuItem(title: "Checking...", action: nil, keyEquivalent: "")
+            checking.isEnabled = false
+            submenu.addItem(checking)
+            parent.submenu = submenu
+            return parent
+        }
+        let allGood = status.requiredMissing.isEmpty && !status.hasWarnings
 
         let parent = NSMenuItem(title: allGood ? "Permissions" : "Permissions (needs attention)", action: nil, keyEquivalent: "")
         let submenu = NSMenu()
         submenu.autoenablesItems = false
-        func row(_ title: String, ok: Bool, url: String?) {
-            let row = NSMenuItem(title: "\(ok ? "✓" : "✗")  \(title)", action: ok || url == nil ? nil : #selector(openSettingsClicked(_:)), keyEquivalent: "")
+        // mark: "✓" fine, "✗" missing, "!" optional or unclear. A row with a
+        // page to open (url) or a window to open (opensSetup) is clickable
+        // while it isn't fine.
+        func row(_ title: String, mark: String, url: String? = nil, opensSetup: Bool = false) {
+            let clickable = mark != "✓" && (url != nil || opensSetup)
+            let row = NSMenuItem(title: "\(mark)  \(title)", action: clickable ? #selector(permissionRowClicked(_:)) : nil, keyEquivalent: "")
             row.target = self
-            row.representedObject = url
-            row.isEnabled = !ok && url != nil
+            row.representedObject = url ?? ""
+            row.isEnabled = clickable
             submenu.addItem(row)
         }
-        row("Input Monitoring (Cmd+Tab)", ok: inputMonitoring,
-            url: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")
-        row("Screen Recording (thumbnails)", ok: screenRecording,
+        row("Input Monitoring (Cmd+Tab)", mark: status.inputMonitoringOK ? "✓" : "✗",
+            url: status.inputPreflight ? nil : "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
+            opensSetup: status.inputPreflight)
+        row("Screen Recording (thumbnails)", mark: status.screenRecording ? "✓" : "✗",
             url: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
-        row("AeroSpace is running", ok: aerospaceReachable, url: nil)
+        let installedMark = status.cliPath == nil ? "✗" : (status.needsRestartForCLI ? "!" : "✓")
+        row("AeroSpace installed", mark: installedMark, opensSetup: true)
+        let runningMark: String
+        switch status.aerospace {
+        case .running: runningMark = "✓"
+        case .notInstalled, .notRunning: runningMark = "✗"
+        case .disabled, .unknown: runningMark = "!"
+        }
+        row("AeroSpace running", mark: runningMark, opensSetup: true)
+        row("Recent order", mark: status.hook == .present || status.hook == .notChecked ? "✓" : "!", opensSetup: true)
+        submenu.addItem(.separator())
+        submenu.addItem(item("Setup...", #selector(setupHelpClicked)))
         parent.submenu = submenu
         return parent
     }
 
-    @objc private func openSettingsClicked(_ sender: NSMenuItem) {
-        guard let string = sender.representedObject as? String, let url = URL(string: string) else { return }
-        print("Menu: open System Settings page \(string)")
-        NSWorkspace.shared.open(url)
+    @objc private func permissionRowClicked(_ sender: NSMenuItem) {
+        if let string = sender.representedObject as? String, !string.isEmpty, let url = URL(string: string) {
+            print("Menu: open System Settings page \(string)")
+            NSWorkspace.shared.open(url)
+        } else {
+            setupHelpClicked()
+        }
+    }
+
+    @objc private func setupHelpClicked() {
+        print("Menu: setup help")
+        SetupHelp.shared.show()
     }
 
     // MARK: Actions

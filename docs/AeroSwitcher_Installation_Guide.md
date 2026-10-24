@@ -119,7 +119,9 @@ AeroSwitcher/
         ├── WindowController.swift
         ├── Keybinds.swift
         ├── HotkeyInterception.swift
-        └── MenuBar.swift
+        ├── MenuBar.swift
+        ├── SettingsWindow.swift
+        └── SetupHelp.swift
 ```
 
 The `.swift` files specifically have to sit inside `Sources/AeroSwitcher/`, not next to `Package.swift`, that's just how Swift Package Manager finds source files (the `path:` line inside `Package.swift` points there). Every `.swift` file in that folder gets built into the app automatically, there's no list of them to keep up to date.
@@ -154,6 +156,8 @@ Then grant its two permissions, both under **System Settings > Privacy & Securit
 - **Screen Recording** — needed to take the window thumbnails. Without this, the switcher opens but every tile is blank.
 
 If AeroSwitcher isn't listed under either yet, open it once first (it registers itself the moment it tries to use the permission), then check again.
+
+You don't have to remember any of this: if a permission, AeroSpace itself, or the recent-order line in `.aerospace.toml` (step 3) is missing, AeroSwitcher opens its **Setup** window on launch, says what is missing and has a button for each fix. It's also in the menu bar menu under **Permissions > Setup...**. Ticks appear by themselves once you've fixed something. Screen Recording sometimes only takes effect after a restart, the window has a button for that.
 
 **Test it now**, before moving on: hold Cmd and press Tab. You should see a row of window thumbnails for whatever's open in your current AeroSpace workspace.
 

@@ -618,6 +618,11 @@ struct GeneralTab: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
+            Section("Setup") {
+                Text("Checks AeroSpace and the permissions AeroSwitcher needs.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button("Open Setup...") { SetupHelp.shared.show() }
+            }
             Section("config.json") {
                 Text(configFileURL().path).font(.callout).textSelection(.enabled)
                 Text("Everything in this window is saved to this file the moment you change it. You can still edit the file by hand.")

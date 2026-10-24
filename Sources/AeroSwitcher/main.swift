@@ -97,6 +97,9 @@ Task { @MainActor in
     // From here on, saving config.json reloads it, and `pkill -HUP
     // AeroSwitcher` reloads it together with AeroSpace's config.
     settings.startWatching()
+    // Checks AeroSpace and the permissions, and opens the setup window on a
+    // first launch or when something required is missing (SetupHelp.swift).
+    SetupHelp.shared.launchCheck()
     // Anything wrong in config.json at launch gets the same window a
     // reload would show, instead of only a print nobody sees.
     ConfigProblemsWindow.shared.update(report: settings.lastReport, aerospace: nil)
