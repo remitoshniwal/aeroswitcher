@@ -9,19 +9,49 @@ import Cocoa
 // that's not in this list, resolveKeybinds() below falls back to that
 // key's own default and reports it as a warning in the problems window,
 // rather than the app just quietly not responding to that key.
+let keyCodesByName: [String: Int64] = [
+    "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9,
+    "b": 11, "q": 12, "w": 13, "e": 14, "r": 15, "y": 16, "t": 17,
+    "1": 18, "2": 19, "3": 20, "4": 21, "6": 22, "5": 23, "9": 25, "7": 26,
+    "8": 28, "0": 29, "o": 31, "u": 32, "i": 34, "p": 35,
+    "l": 37, "j": 38, "k": 40, "n": 45, "m": 46,
+    "space": 49, "tab": 48, "return": 36, "enter": 36, "escape": 53, "delete": 51,
+    "up": 126, "down": 125, "left": 123, "right": 124,
+    "pageup": 116, "pagedown": 121,
+]
+
 func keyCode(forName name: String) -> Int64? {
-    let table: [String: Int64] = [
-        "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9,
-        "b": 11, "q": 12, "w": 13, "e": 14, "r": 15, "y": 16, "t": 17,
-        "1": 18, "2": 19, "3": 20, "4": 21, "6": 22, "5": 23, "9": 25, "7": 26,
-        "8": 28, "0": 29, "o": 31, "u": 32, "i": 34, "p": 35,
-        "l": 37, "j": 38, "k": 40, "n": 45, "m": 46,
-        "space": 49, "tab": 48, "return": 36, "enter": 36, "escape": 53, "delete": 51,
-        "up": 126, "down": 125, "left": 123, "right": 124,
-        "pageup": 116, "pagedown": 121,
-    ]
-    return table[name.lowercased()]
+    keyCodesByName[name.lowercased()]
 }
+
+// The other way round, for the settings window's key recorder: the name
+// config.json uses for a key that was just pressed. nil = a key that isn't
+// in the table above (F-keys, punctuation...), which AeroSwitcher can't use.
+// "return" and "enter" are the same key, "return" is the one written.
+func keyName(forCode code: Int64) -> String? {
+    if code == 36 { return "return" }
+    return keyCodesByName.first { $0.value == code }?.key
+}
+
+// How a key name is shown in the settings window: "d" as "D",
+// "pagedown" as "Page Down".
+func keyDisplayName(_ name: String) -> String {
+    let words: [String: String] = [
+        "space": "Space", "tab": "Tab", "return": "Return", "enter": "Return", "escape": "Escape",
+        "delete": "Delete", "up": "↑", "down": "↓", "left": "←", "right": "→",
+        "pageup": "Page Up", "pagedown": "Page Down",
+    ]
+    return words[name.lowercased()] ?? name.uppercased()
+}
+
+// Every keybind, in the order the settings window lists them, with where
+// it lives in KeybindConfig (so its default can be looked up).
+let keybindActions: [(name: String, keyPath: WritableKeyPath<KeybindConfig, String>)] = [
+    ("cycleNext", \.cycleNext), ("cyclePrevious", \.cyclePrevious),
+    ("enterGreyedRow", \.enterGreyedRow), ("exitGreyedRow", \.exitGreyedRow),
+    ("pageUp", \.pageUp), ("pageDown", \.pageDown),
+    ("confirm", \.confirm), ("cancel", \.cancel),
+]
 
 struct ResolvedKeybinds {
     let cycleNext: Int64

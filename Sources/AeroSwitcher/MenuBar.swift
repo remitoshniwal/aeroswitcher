@@ -6,7 +6,7 @@ import ServiceManagement
 // The one icon AeroSwitcher puts in the menu bar. It replaces AeroSpace's
 // own icon: it shows the name of the workspace you're in, and its menu does
 // what AeroSpace's menu does (switch workspace, enable or disable, reload,
-// open the config) plus AeroSwitcher's own things (config.json, permission
+// open the config) plus AeroSwitcher's own things (Settings, permission
 // status, launch at login, About, Quit).
 //
 // AeroSpace's own icon can be hidden with "Hide AeroSpace's icon" in this
@@ -227,7 +227,19 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        menu.addItem(item("Open config.json", #selector(openConfigJSONClicked)))
+        // "Settings..." opens the settings window (SettingsWindow.swift).
+        // Holding Option while the menu is open swaps it for "Open
+        // config.json" (a standard macOS menu trick: an "alternate" item
+        // with the same key and Option added).
+        let settingsItem = item("Settings...", #selector(settingsClicked))
+        settingsItem.keyEquivalent = ","
+        settingsItem.keyEquivalentModifierMask = [.command]
+        menu.addItem(settingsItem)
+        let openConfig = item("Open config.json", #selector(openConfigJSONClicked))
+        openConfig.keyEquivalent = ","
+        openConfig.keyEquivalentModifierMask = [.command, .option]
+        openConfig.isAlternate = true
+        menu.addItem(openConfig)
         menu.addItem(permissionsItem(aerospaceReachable: reachable || disabled))
         let login = item("Launch at login", #selector(launchAtLoginClicked))
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
@@ -346,6 +358,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         NSWorkspace.shared.open(configFileURL())
     }
 
+    @objc private func settingsClicked() {
+        print("Menu: settings")
+        SettingsWindow.shared.show()
+    }
+
     // MARK: Launch at login
 
     // Apple's own "open at login" for apps (SMAppService). It shows up in
@@ -358,11 +375,25 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     // macOS remembers the PATH of the app that registered. A copy sitting in
     // the project folder would leave a login item pointing there, so only a
     // copy in an Applications folder is allowed to do this.
-    @objc private func launchAtLoginClicked() {
+    //
+    // Not private: the settings window's "Launch at login" toggle calls
+    // this same function, so both always behave the same.
+    @objc func launchAtLoginClicked() {
+        defer { NotificationCenter.default.post(name: .menuBarTogglesChanged, object: nil) }
         let service = SMAppService.mainApp
         print("Menu: launch at login clicked, status was \(service.status)")
         let path = Bundle.main.bundlePath
         let inApplications = path.hasPrefix("/Applications/") || path.hasPrefix(NSHomeDirectory() + "/Applications/")
+        // Both ways, not just turning it on: a test copy in the project
+        // folder sees the installed app's login item as its own (same app
+        // ID), so turning it OFF there would quietly remove the real one.
+        // That happened once while testing the settings window.
+        guard inApplications else {
+            print("Launch at login: refused, this copy is in \(path)")
+            alert("Launch at login only works from the Applications folder",
+                  "This copy of AeroSwitcher is in \(path). Change Launch at login from the copy in /Applications, so the login item always points at the right place.")
+            return
+        }
         do {
             switch service.status {
             case .enabled:
@@ -371,11 +402,6 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                 SMAppService.openSystemSettingsLoginItems()
                 return
             default:
-                guard inApplications else {
-                    alert("Launch at login only works from the Applications folder",
-                          "This copy of AeroSwitcher is in \(path). Move it to /Applications and open it from there, so the login item doesn't point at the wrong place.")
-                    return
-                }
                 try service.register()
                 if service.status == .requiresApproval {
                     SMAppService.openSystemSettingsLoginItems()
@@ -424,8 +450,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     // its left. macOS remembers icon positions, so that's a one-time step.
     //
     // The on/off choice is stored in AeroSwitcher's own preferences, not in
-    // config.json (a menu tick writing to your hand-edited file could mess
-    // up its formatting). The Phase 9 settings window can move it later.
+    // config.json: it belongs with the divider's saved position (also in
+    // these preferences, and only meaningful on this Mac), and turning it on
+    // needs the arranging step above, which a hand edit of config.json would
+    // skip. The settings window shows it as a toggle that runs this code.
 
     private var divider: NSStatusItem?
     private let hideAeroSpaceIconKey = "HideAeroSpaceIcon"
@@ -434,6 +462,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         get { UserDefaults.standard.bool(forKey: hideAeroSpaceIconKey) }
         set { UserDefaults.standard.set(newValue, forKey: hideAeroSpaceIconKey) }
     }
+
+    // For the settings window's toggle.
+    var isHidingAeroSpaceIcon: Bool { hideAeroSpaceIcon }
 
     // wide = hiding (3000 points, no text). Not wide = the thin │ shown
     // while you arrange icons.
@@ -465,7 +496,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         print("Divider: removed, AeroSpace's icon is visible again")
     }
 
-    @objc private func hideAeroSpaceIconClicked() {
+    // Not private, for the same reason as launchAtLoginClicked: the settings
+    // window's toggle runs exactly this, alert and all.
+    @objc func hideAeroSpaceIconClicked() {
+        defer { NotificationCenter.default.post(name: .menuBarTogglesChanged, object: nil) }
         if hideAeroSpaceIcon {
             print("Menu: show AeroSpace's icon again")
             hideAeroSpaceIcon = false
@@ -517,4 +551,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         print("Menu: quit")
         NSApp.terminate(nil)
     }
+}
+
+extension Notification.Name {
+    // Posted after Launch at login or Hide AeroSpace's icon was clicked
+    // (in the menu or the settings window), so an open settings window
+    // shows the new state.
+    static let menuBarTogglesChanged = Notification.Name("AeroSwitcherMenuBarTogglesChanged")
 }

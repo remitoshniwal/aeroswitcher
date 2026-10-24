@@ -16,13 +16,14 @@ The app's code lives in `Sources/AeroSwitcher/`, one file per part of the app:
 | `AeroSpaceBridge.swift` | Every call out to the `aerospace` command line tool (list windows, focus a window, current workspace), and the live event connection the menu bar icon uses |
 | `ThumbnailCapture.swift` | Taking the window screenshots |
 | `DataModel.swift` | The basic types (a thumbnail, a launcher app) and the Finder/Terminal "new window" scripts |
-| `Config.swift` | Reading `config.json`, launcher tiles, custom icons, homeless apps, launching apps |
+| `Config.swift` | Reading `config.json`, launcher tiles, custom icons, homeless apps, launching apps, and the safe way the settings window edits `config.json` |
 | `Views.swift` | Everything you see: the switcher panel, its cards, and the Cmd+\` overview |
 | `MRUTracking.swift` | Recently-used order, and remembering which workspace each app was last in |
 | `WindowController.swift` | The panel's brain: paging, selection, showing and hiding it, switching windows |
-| `Keybinds.swift` | Turning key names from `config.json` into real key codes |
+| `Keybinds.swift` | Turning key names from `config.json` into real key codes, and back (for recording keys) |
 | `HotkeyInterception.swift` | Catching Cmd+Tab before macOS sees it |
 | `MenuBar.swift` | The menu bar icon: workspace name, and its menu |
+| `SettingsWindow.swift` | The settings window (General, Launcher tiles, Keys, Icons) |
 
 They all build into one app together, so code in one file can use things from another without any extra setup. There's no separate UI framework project, no storyboard, just:
 
@@ -169,7 +170,7 @@ The menu, top to bottom:
 - **Disable AeroSpace / Enable AeroSpace**: `aerospace enable off` / `on`. While AeroSpace is disabled it refuses every other command, so the workspace list is replaced by "AeroSpace is disabled".
 - **Reload config**: reloads config.json and AeroSpace's config together, exactly like `pkill -HUP AeroSwitcher` (see **Reloading**).
 - **Open AeroSpace config**: opens the file AeroSpace says it's using (`aerospace config --config-path`) in its default app.
-- **Open config.json**: opens AeroSwitcher's own config. A settings window is planned to replace this.
+- **Settings...**: opens the settings window (see **Settings window**, below). Hold Option while the menu is open and it turns into **Open config.json**, which opens the file itself.
 - **Permissions**: a tick or a cross for Input Monitoring, Screen Recording, and whether AeroSpace is running. Clicking a cross opens the right page in System Settings. These checks only look, they never pop up a permission request.
 - **Launch at login**: see **Packaging it as your daily-use app**, below.
 - **Hide AeroSpace's icon**: see below.
@@ -186,16 +187,42 @@ Instead, **Hide AeroSpace's icon** pushes it off the screen, the same trick menu
 - Turning it on first shows the divider as a thin **│** with a short explanation. AeroSpace's workspace name must be on the left of the │ (it usually already is). If it isn't, hold Cmd and drag it there, staying inside the menu bar. Then click **Hide**. macOS remembers where icons are, so this is a one-time step.
 - **Everything to the left of AeroSwitcher's name is hidden, not just AeroSpace's icon.** To keep another app's icon visible, Cmd-drag it to the right of AeroSwitcher's name (turn the option off and on again to see the │ while you do).
 - Turning it off removes the divider and AeroSpace's icon is back at once. If AeroSwitcher quits, the divider goes with it, so AeroSpace's icon shows again and you're never left without one.
-- The choice is stored in AeroSwitcher's own preferences (`HideAeroSpaceIcon` in `com.aeroswitcher.app`), not in config.json.
+- The choice is stored in AeroSwitcher's own preferences (`HideAeroSpaceIcon` in `com.aeroswitcher.app`), not in config.json, because it belongs with the divider's saved position (also stored there) and turning it on needs the arranging step above. The settings window has the same toggle, running the same code.
 - The divider stretches over the empty part of the menu bar, but app menus (File, Edit, ...) still open normally. Clicking the empty part does nothing.
 
 **The menu never waits for AeroSpace.** It opens instantly with the last known workspaces and refreshes them in the background (an open menu updates itself). Asking AeroSpace while the menu was opening sometimes took over 2 seconds in testing.
 
 **Only one copy at a time.** A second AeroSwitcher that starts while one is running quits right away, so two can never both catch Cmd+Tab or show two icons. It waits up to 3 seconds first, so `pkill AeroSwitcher; open AeroSwitcher.app` still works. A copy started with `AEROSWITCHER_CONFIG_DIR` (for testing) skips this check.
 
+## Settings window
+
+**Settings...** in the menu bar menu opens a window that can change everything config.json can, so the file never has to be edited by hand (it still can be). Four tabs:
+
+- **General**: the Running / Quit / No window text under launcher tiles (`showTileStatusText`), auto reload (`autoReloadConfig`), **Launch at login** and **Hide AeroSpace's icon** (the same code as the menu items), and buttons to open config.json, show it in Finder, or reload both configs.
+- **Launcher tiles**: AeroSpace's workspaces on the left, that workspace's tiles on the right. **Add app...** lists the apps that are running and installed (with a search field, and **Other...** for an app somewhere else). The minus button removes a tile. The arrow next to a tile shows its fields (name, match, open, new window style) to fix by hand. A workspace that config.json has but AeroSpace doesn't is marked, with a button to remove it. There's no reordering on purpose: tiles are always shown alphabetically, Running before Quit, whatever order the file has.
+- **Keys**: each key used while the switcher is open, with **Record**: click it, press the key. Cmd may be held. Tab is refused (it's always Cmd+Tab), keys AeroSwitcher doesn't know (F-keys, punctuation) are refused, Space gets a warning (Spotlight wins Cmd+Space). A key another action already uses asks whether to swap the two. **Reset to defaults** puts D A S W Q E F Escape back. Cmd+Tab, Cmd+Shift+Tab and Cmd+\` are shown but fixed.
+- **Icons**: every launcher-tile app, every app with a custom icon, and every running app. **Choose image...** picks a picture, **Remove** goes back to the app's own icon. The image file is not copied, so leave it where it is. A path that can't be loaded is shown in red.
+
+**How it saves.** Every change is saved the moment you make it (text fields when you press Return or click elsewhere) and applies at once, even with `autoReloadConfig` off. Each change reads config.json fresh, changes only the one part it's about, and writes it back (`editConfigFile` in `Config.swift`). So:
+
+- **Hand edits are kept.** Something you saved in your editor is never thrown away by a later click in the window. The window also shows hand edits within about a second (it re-reads the file after every reload).
+- **Unknown keys are kept**, at the top level, inside `keybinds`, and inside each app entry.
+- **Same part changed in both places:** if you changed by hand the same part a window change is about (say a keybind, then Reset in the window before the window caught up), nothing is saved and the window says "config.json was changed meanwhile". It then shows the new version, and doing the change again works.
+- **A broken config.json is never overwritten.** While the file can't be read (a missing comma, say), the window shows only the error (with line and column) and an Open config.json button, until the file is fixed.
+- **It never writes a file that wouldn't load.** The result is test-read before saving.
+- **Backup:** the first time the window saves in each run of AeroSwitcher, the file as it was is copied to `config.json.backup` next to it.
+- **Formatting:** the window writes config.json in one fixed layout (one line per app, keys in a fixed order, the same shape as the example below). The first save from the window tidies the whole file into that layout once; values are never changed. After that, a save only changes the lines it's about.
+- **What it can't protect:** unsaved changes in an editor that has config.json open. Save in the editor before using the window.
+
+**Good to know.**
+- Opening the window makes AeroSwitcher the active app, so it can be typed into. While it's active, the menu bar shows a small **AeroSwitcher** and **Edit** menu; the Edit menu is what makes copy, paste, select all and undo work in the text fields. There's no Quit in it on purpose (quitting AeroSwitcher also turns off its Cmd+Tab).
+- The window can't be resized, so the maximize script leaves it alone. Like all of AeroSwitcher's own windows it doesn't show up as a Cmd+Tab card; reopen it with **Settings...**.
+- Recording a key only listens to keys typed into this window, and only for one key. It can't see keys typed in other apps, and Cmd+Tab keeps working while it records.
+- **Launch at login** only changes from the copy in `/Applications` (in both directions). A test build in the project folder sees the installed app's login item as its own, and turning it off there would remove the real one.
+
 ## Config file (`~/Library/Application Support/AeroSwitcher/config.json`)
 
-A plain JSON file, created automatically the first time AeroSwitcher runs, with the keybind defaults already filled in — `workspaces` starts empty on purpose (the app is built without any one person's setup baked into it, so it works cleanly if someone else runs it too), so the switcher itself and the all-workspaces overview work right away, you just won't see any greyed-out "not running yet" tiles until you add some, following the example below. Edit the file any time and save it: AeroSwitcher reloads it by itself within a moment, the same way AeroSpace does with `auto-reload-config = true` (see **Reloading**, below). Nothing needs to be rebuilt or restarted.
+A plain JSON file, created automatically the first time AeroSwitcher runs, with the keybind defaults already filled in. `workspaces` starts empty on purpose (the app is built without any one person's setup baked into it, so it works cleanly if someone else runs it too), so the switcher itself and the all-workspaces overview work right away, you just won't see any greyed-out "not running yet" tiles until you add some, following the example below. The **Settings** window (above) can change all of it; you can also edit the file any time and save it: AeroSwitcher reloads it by itself within a moment, the same way AeroSpace does with `auto-reload-config = true` (see **Reloading**, below). Nothing needs to be rebuilt or restarted.
 
 It lives under `~/Library/Application Support/`, the standard place a Mac app is supposed to keep its own settings, same folder structure apps like Chrome or Slack use for theirs, rather than a loose dotfile sitting directly in your home folder. `~/Library` is hidden by default in Finder (Cmd+Shift+. in a Finder window toggles hidden files if you ever want to look at it directly), or just open it by path.
 
@@ -228,7 +255,7 @@ It has five sections (all but `keybinds` and `workspaces` optional):
 }
 ```
 
-**`keybinds`**: each value is the name of a key, lowercase. Letters (`"a"`–`"z"`), digits, and a few named keys (`"space"`, `"escape"`, `"return"`, `"tab"`, `"delete"`, `"up"`, `"down"`, `"left"`, `"right"`) are recognized, that list lives in `keyCode(forName:)` in `Keybinds.swift` if you ever want to see or extend it. Tab itself can't be reassigned, it's permanently what opens the switcher. Careful with combinations macOS itself already reserves system-wide (Space for Spotlight is the one that bit the original default here) — those will keep doing their system behavior no matter what this file says, since AeroSwitcher can't override the OS's own reserved shortcuts.
+**`keybinds`**: each value is the name of a key, lowercase. Letters (`"a"`–`"z"`), digits, and a few named keys (`"space"`, `"escape"`, `"return"`, `"tab"`, `"delete"`, `"up"`, `"down"`, `"left"`, `"right"`, `"pageup"`, `"pagedown"`) are recognized, that list lives in `keyCode(forName:)` in `Keybinds.swift` if you ever want to see or extend it. Tab itself can't be reassigned, it's permanently what opens the switcher. Careful with combinations macOS itself already reserves system-wide (Space for Spotlight is the one that bit the original default here). Those will keep doing their system behavior no matter what this file says, since AeroSwitcher can't override the OS's own reserved shortcuts.
 
 **`workspaces`**: one array per AeroSpace workspace name, each entry a launcher tile:
 - `name` — what's shown under the grayed tile
@@ -331,6 +358,6 @@ A few things worth doing once, when you're ready to stop rebuilding and just lea
 
 1. **Move the built `.app` to `/Applications`.** It'll run from anywhere, but `/Applications` is the standard, expected location, and it's where Login Items and Spotlight expect to find things.
 2. **Re-grant permissions on that final copy.** Since it's ad-hoc signed (not a paid Developer ID), macOS ties Input Monitoring and Screen Recording to the exact signed binary. Moving or rebuilding it can make macOS treat it as "new" and ask again, so do one full test (open the switcher, confirm thumbnails and Cmd+Tab both work) after moving it, before you rely on it daily.
-3. **Start it at login.** Open AeroSwitcher from `/Applications`, then tick **Launch at login** in its menu bar menu. This uses Apple's own login item API (`SMAppService`) and shows up in System Settings > General > Login Items & Extensions. It refuses to do this from a copy outside an Applications folder, because macOS remembers the path, and a login item pointing at a build folder would break. Adding it by hand there (click "+" under "Open at Login") also still works, and macOS treats that hand-made entry as the same login item: the menu shows it ticked. Either way, no separate LaunchAgent is needed. If AeroSwitcher somehow gets started twice at login, the second copy quits by itself.
+3. **Start it at login.** Open AeroSwitcher from `/Applications`, then tick **Launch at login** in its menu bar menu (or in the settings window). This uses Apple's own login item API (`SMAppService`) and shows up in System Settings > General > Login Items & Extensions. It refuses to change this from a copy outside an Applications folder, in either direction: macOS remembers the path, so a login item pointing at a build folder would break, and a test build turning it off would remove the installed app's login item (they count as the same app). Adding it by hand there (click "+" under "Open at Login") also still works, and macOS treats that hand-made entry as the same login item: the menu shows it ticked. Either way, no separate LaunchAgent is needed. If AeroSwitcher somehow gets started twice at login, the second copy quits by itself.
 4. **Stop rebuilding it after that.** Every rebuild changes its code signature, which is exactly the kind of thing that resets the permissions above. Once you've got the version you're happy with, treat it as done rather than a work in progress you keep touching.
 5. **Optional sanity check**: log out and back in once (or restart) after setting up Login Items, just to confirm it actually launches on its own before you stop thinking about it.

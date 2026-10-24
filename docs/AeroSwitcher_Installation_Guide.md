@@ -161,9 +161,9 @@ If AeroSwitcher isn't listed under either yet, open it once first (it registers 
 
 AeroSwitcher creates `~/Library/Application Support/AeroSwitcher/config.json` automatically the first time it runs, with sensible defaults and an empty `workspaces` list. You don't have to touch it for the app to work, Cmd+Tab and the Cmd+` overview both work immediately.
 
-If you want the greyed-out "not open yet" launcher tiles (jump straight to launching an app that isn't running), edit that file and add entries under `workspaces`, matching your `.aerospace.toml` groupings. See the **Config file** section of the main documentation for the exact format, this part is optional and can be done any time later, not something that blocks getting the app running.
+If you want the greyed-out "not open yet" launcher tiles (jump straight to launching an app that isn't running), click AeroSwitcher's workspace name in the menu bar, choose **Settings...**, open **Launcher tiles**, pick a workspace and click **Add app...**, matching your `.aerospace.toml` groupings. You can also edit the file by hand and add entries under `workspaces`; see the **Config file** section of the main documentation for the exact format, this part is optional and can be done any time later, not something that blocks getting the app running.
 
-Saving `config.json` applies it within a second, no restart needed (see **Reloading** in the main documentation).
+Changes in the settings window apply at once, and saving `config.json` by hand applies it within a second, no restart needed (see **Reloading** in the main documentation).
 
 ## 8. The last permission: Accessibility, for the maximize toggle
 
@@ -175,7 +175,7 @@ Separately from AeroSwitcher's own two permissions above, the fullscreen/maximiz
 
 Once you're happy with everything above and don't expect to rebuild again soon (rebuilding resets code signing identity checks in some edge cases, so treat this as a "final" step):
 
-Open `/Applications/AeroSwitcher.app`, click its workspace name in the menu bar, and tick **Launch at login**. (It only allows this from an Applications folder, because macOS remembers where the app was.) Adding it by hand in **System Settings > General > Login Items & Extensions** under "Open at Login" works too; the menu then shows it ticked.
+Open `/Applications/AeroSwitcher.app`, click its workspace name in the menu bar, and tick **Launch at login** (also in **Settings...** > General). (It only allows this from an Applications folder, because macOS remembers where the app was.) Adding it by hand in **System Settings > General > Login Items & Extensions** under "Open at Login" works too; the menu then shows it ticked.
 
 That's it, no separate background service needed. It runs with no Dock icon (this is intentional, set via `LSUIElement` in its `Info.plist`) and nothing on screen except its menu bar item until you press Cmd+Tab.
 

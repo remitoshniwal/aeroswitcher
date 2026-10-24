@@ -426,6 +426,9 @@ final class SettingsStore {
         }
         lastReport = report
         updateFileWatcher()
+        // Tells the settings window (SettingsWindow.swift) to show what's
+        // in the file now, e.g. right after you saved a hand edit.
+        NotificationCenter.default.post(name: .configDidReload, object: nil)
         return report
     }
 
@@ -526,6 +529,328 @@ final class SettingsStore {
 }
 
 let settings = SettingsStore()
+
+// MARK: - Editing config.json from the settings window
+//
+// The settings window (SettingsWindow.swift) changes config.json through
+// editConfigFile below, never by writing out its own copy of the settings.
+// That matters for three reasons:
+//
+//   - Your hand edits survive. Every change starts by reading the file as
+//     it is RIGHT NOW, changes only the one part it's about (one keybind,
+//     one workspace's tiles...), and writes that back. Something you saved
+//     by hand a second ago, anywhere else in the file, is still there.
+//   - Unknown keys survive. The file is read as plain JSON, not as
+//     SwitcherConfig, so a key AeroSwitcher doesn't know (a typo you meant
+//     to fix, a setting from a newer version) is kept instead of silently
+//     dropped, the way Swift's normal decoding would.
+//   - It can't break the file. The result is test-read as SwitcherConfig
+//     before it's written, and a file that's already broken is never
+//     overwritten (you fix it first).
+//
+// What does change: the file is written in one fixed layout (see
+// houseStyleJSON), so the first save from the window tidies the spacing
+// and key order of the whole file once. Values are never touched. The
+// file as it was before that first save is kept as config.json.backup.
+
+extension Notification.Name {
+    // Posted after every reload of config.json: a save in your editor, a
+    // `pkill -HUP`, or a change made by the settings window itself.
+    static let configDidReload = Notification.Name("AeroSwitcherConfigDidReload")
+}
+
+// config.json as it is on disk right now, read two ways.
+struct ConfigFileSnapshot {
+    // As plain JSON, every key, known or not. This is what gets edited.
+    let tree: [String: Any]?
+    // Read the normal way, for showing it. nil = it wouldn't load.
+    let config: SwitcherConfig?
+    // Why it can't be used, in the same words as the problems window.
+    // nil means the file is fine.
+    let problem: String?
+}
+
+// The real file to write. If config.json is ever a symlink (some people
+// keep settings in a dotfiles folder), the file it points to is written,
+// otherwise the save below would replace the link with a plain file.
+func configFileWriteURL() -> URL {
+    configFileURL().resolvingSymlinksInPath()
+}
+
+func readConfigSnapshot() -> ConfigFileSnapshot {
+    let url = configFileWriteURL()
+    guard let data = try? Data(contentsOf: url) else {
+        return ConfigFileSnapshot(tree: nil, config: nil, problem: "Couldn't read \(url.path).")
+    }
+    return configSnapshot(of: data)
+}
+
+func configSnapshot(of data: Data) -> ConfigFileSnapshot {
+    let tree = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    do {
+        let config = try JSONDecoder().decode(SwitcherConfig.self, from: data)
+        return ConfigFileSnapshot(tree: tree, config: config,
+                                  problem: tree == nil ? "config.json isn't a { } group at the top level." : nil)
+    } catch {
+        return ConfigFileSnapshot(tree: tree, config: nil, problem: describeDecodingError(error))
+    }
+}
+
+// The value at a path like ["workspaces", "Dev"], or nil if it isn't there.
+func configValue(at path: [String], in tree: [String: Any]) -> Any? {
+    var current: Any? = tree
+    for key in path {
+        current = (current as? [String: Any])?[key]
+    }
+    return current
+}
+
+// Whether two pieces of plain JSON are the same (same keys, same values).
+func sameJSON(_ a: Any?, _ b: Any?) -> Bool {
+    switch (a, b) {
+    case (nil, nil): return true
+    case let (a?, b?): return (a as AnyObject).isEqual(b)
+    default: return false
+    }
+}
+
+enum ConfigEditOutcome {
+    case saved
+    case refused(String)  // why nothing was saved, shown in the window
+}
+
+// Only the first change in each run of the app makes the backup, so the
+// backup is "the file before the window touched it", not "one change ago".
+private var configBackupMadeThisRun = false
+
+// The one way the settings window changes config.json.
+//   description: what the change is, for the log ("set keybinds.confirm = g").
+//   touching:    the parts of the file this change is about.
+//   shownTree:   the file as the window last showed it. If one of the
+//                `touching` parts is different in the file now, you edited
+//                that same part by hand in the meantime, so nothing is
+//                written and the window shows the new version instead.
+//   change:      makes the change on the freshly read file.
+@MainActor
+func editConfigFile(_ description: String, touching paths: [[String]], shownTree: [String: Any],
+                    change: (inout [String: Any]) -> Void) -> ConfigEditOutcome {
+    let url = configFileWriteURL()
+    guard let original = try? Data(contentsOf: url) else {
+        return .refused("Couldn't read \(url.path), so nothing was changed.")
+    }
+    let before = configSnapshot(of: original)
+    guard var tree = before.tree, before.problem == nil else {
+        return .refused("config.json can't be read right now, so nothing was changed. Fix it first: \(before.problem ?? "unknown problem")")
+    }
+    for path in paths where !sameJSON(configValue(at: path, in: tree), configValue(at: path, in: shownTree)) {
+        return .refused("config.json was changed meanwhile (\(path.joined(separator: "."))), so that wasn't saved. The window now shows the new version, please do it again.")
+    }
+    change(&tree)
+    let data = Data(houseStyleJSON(tree).utf8)
+    do {
+        _ = try JSONDecoder().decode(SwitcherConfig.self, from: data)
+    } catch {
+        print("Settings: refused \"\(description)\", the result wouldn't load: \(describeDecodingError(error))")
+        return .refused("That change would leave config.json unable to load, so it wasn't saved. (\(describeDecodingError(error)))")
+    }
+    if !configBackupMadeThisRun {
+        let backupURL = url.deletingLastPathComponent().appendingPathComponent("config.json.backup")
+        do {
+            try original.write(to: backupURL, options: .atomic)
+            configBackupMadeThisRun = true
+            print("Settings: copied config.json to \(backupURL.path) before the first change.")
+        } catch {
+            return .refused("Couldn't make the backup copy \(backupURL.path), so nothing was changed. (\(error.localizedDescription))")
+        }
+    }
+    // .atomic writes a complete new file and swaps it in, so a reload can
+    // never read a half-written file. The file watcher in SettingsStore
+    // already copes with swapped-in files (editors do the same).
+    do {
+        try data.write(to: url, options: .atomic)
+    } catch {
+        return .refused("Couldn't save config.json: \(error.localizedDescription)")
+    }
+    print("Settings: \(description)")
+    // Applied right away, even with autoReloadConfig turned off: that
+    // setting is about hand edits, the window's changes always apply.
+    let report = settings.reload()
+    ConfigProblemsWindow.shared.update(report: report, aerospace: nil)
+    return .saved
+}
+
+// MARK: The layout config.json is written in
+//
+// One fixed layout, close to how a hand-made config.json usually looks:
+//
+//   {
+//     "keybinds" : {
+//       "cycleNext" : "d",
+//       ...
+//     },
+//     "workspaces" : {
+//       "Core" : [
+//         { "name" : "WhatsApp", "match" : "Whatsapp", "open" : "Whatsapp" },
+//         ...
+//       ]
+//     },
+//     "showTileStatusText" : false,
+//     "icons" : {}
+//   }
+//
+// Top level in the order below, then any keys AeroSwitcher doesn't know,
+// alphabetically. Workspaces alphabetically. One line per app, keys in the
+// order name, match, open, newWindowStyle, icon, then unknown ones. To
+// change the layout, change the key orders here.
+
+let topLevelKeyOrder = ["keybinds", "workspaces", "showTileStatusText", "autoReloadConfig", "icons"]
+let keybindKeyOrder = ["cycleNext", "cyclePrevious", "enterGreyedRow", "exitGreyedRow", "pageUp", "pageDown", "confirm", "cancel"]
+let appEntryKeyOrder = ["name", "match", "open", "newWindowStyle", "icon"]
+
+func houseStyleJSON(_ tree: [String: Any]) -> String {
+    let keys = orderedKeys(tree.keys, first: topLevelKeyOrder)
+    let lines = keys.map { key -> String in
+        let value = tree[key]!
+        let rendered: String
+        switch key {
+        case "keybinds": rendered = jsonBlock(value, indent: 1, keyOrder: keybindKeyOrder)
+        case "workspaces": rendered = workspacesBlock(value)
+        default: rendered = jsonBlock(value, indent: 1, keyOrder: [])
+        }
+        return "  " + jsonFragment(key) + " : " + rendered
+    }
+    return "{\n" + lines.joined(separator: ",\n") + "\n}\n"
+}
+
+// `first` in that order (only the ones present), then the rest A to Z.
+private func orderedKeys(_ keys: Dictionary<String, Any>.Keys, first: [String]) -> [String] {
+    first.filter { keys.contains($0) } + keys.filter { !first.contains($0) }.sorted()
+}
+
+// A group or list over several lines, `indent` levels deep. Anything else
+// (text, a number, true/false) on one line.
+private func jsonBlock(_ value: Any, indent: Int, keyOrder: [String]) -> String {
+    let pad = String(repeating: "  ", count: indent)
+    if let dict = value as? [String: Any] {
+        if dict.isEmpty { return "{}" }
+        let inner = orderedKeys(dict.keys, first: keyOrder).map {
+            pad + "  " + jsonFragment($0) + " : " + jsonBlock(dict[$0]!, indent: indent + 1, keyOrder: [])
+        }
+        return "{\n" + inner.joined(separator: ",\n") + "\n" + pad + "}"
+    }
+    if let list = value as? [Any] {
+        if list.isEmpty { return "[]" }
+        let inner = list.map { pad + "  " + jsonBlock($0, indent: indent + 1, keyOrder: []) }
+        return "[\n" + inner.joined(separator: ",\n") + "\n" + pad + "]"
+    }
+    return jsonFragment(value)
+}
+
+private func workspacesBlock(_ value: Any) -> String {
+    guard let dict = value as? [String: Any], !dict.isEmpty else {
+        return jsonBlock(value, indent: 1, keyOrder: [])
+    }
+    let inner = dict.keys.sorted().map { name -> String in
+        let apps = dict[name]!
+        guard let list = apps as? [Any], !list.isEmpty else {
+            return "    " + jsonFragment(name) + " : " + jsonBlock(apps, indent: 2, keyOrder: [])
+        }
+        let rows = list.map { "      " + appEntryLine($0) }
+        return "    " + jsonFragment(name) + " : [\n" + rows.joined(separator: ",\n") + "\n    ]"
+    }
+    return "{\n" + inner.joined(separator: ",\n") + "\n  }"
+}
+
+private func appEntryLine(_ entry: Any) -> String {
+    guard let dict = entry as? [String: Any], !dict.isEmpty else { return jsonFragment(entry) }
+    let parts = orderedKeys(dict.keys, first: appEntryKeyOrder).map { jsonFragment($0) + " : " + jsonFragment(dict[$0]!) }
+    return "{ " + parts.joined(separator: ", ") + " }"
+}
+
+// One value written by Apple's own JSON writer on one line, so text is
+// escaped correctly. withoutEscapingSlashes keeps icon paths readable
+// ("~/Pictures/x.png", not "~\/Pictures\/x.png").
+private func jsonFragment(_ value: Any) -> String {
+    let data = try? JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed, .sortedKeys, .withoutEscapingSlashes])
+    return data.flatMap { String(data: $0, encoding: .utf8) } ?? "null"
+}
+
+// MARK: Installed apps (the settings window's "Add app" list)
+
+struct InstalledApp: Identifiable {
+    let path: String
+    let displayName: String  // what Finder shows, e.g. "Visual Studio Code"
+    let fileName: String     // the .app's file name without ".app", what `open -a` takes
+    let bundleName: String?  // the name inside the app, e.g. "Code"
+    let bundleID: String?
+    var id: String { path }
+}
+
+func installedApp(at path: String) -> InstalledApp {
+    let info = Bundle(path: path)?.infoDictionary
+    let fileName = ((path as NSString).lastPathComponent as NSString).deletingPathExtension
+    let shown = FileManager.default.displayName(atPath: path)
+    return InstalledApp(
+        path: path,
+        displayName: shown.hasSuffix(".app") ? String(shown.dropLast(4)) : shown,
+        fileName: fileName,
+        bundleName: info?["CFBundleName"] as? String,
+        bundleID: info?["CFBundleIdentifier"] as? String)
+}
+
+// Every app in the usual places, plus one folder deep (for apps that come
+// in a folder, like "Utilities"). Finder lives somewhere else, so it's
+// added by hand. Slow-ish (a few hundred apps), so the window runs it in
+// the background.
+func scanInstalledApps() -> [InstalledApp] {
+    let fileManager = FileManager.default
+    let roots = ["/Applications", "/System/Applications", NSHomeDirectory() + "/Applications"]
+    var paths = ["/System/Library/CoreServices/Finder.app"]
+    for root in roots {
+        for item in (try? fileManager.contentsOfDirectory(atPath: root)) ?? [] where !item.hasPrefix(".") {
+            let full = root + "/" + item
+            if item.hasSuffix(".app") {
+                paths.append(full)
+                continue
+            }
+            var isFolder: ObjCBool = false
+            guard fileManager.fileExists(atPath: full, isDirectory: &isFolder), isFolder.boolValue else { continue }
+            for inner in (try? fileManager.contentsOfDirectory(atPath: full)) ?? [] where inner.hasSuffix(".app") {
+                paths.append(full + "/" + inner)
+            }
+        }
+    }
+    var seen = Set<String>()
+    return paths
+        .filter { seen.insert($0).inserted }
+        .map(installedApp(at:))
+        .sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+}
+
+// The config.json entry for a picked app. "match" has to be the name
+// AeroSpace reports for the app's windows, and that's a guess for an app
+// that isn't running: the bundle's own name is usually it, or a shorter
+// part of it, which still works since matching is "contains" (Brave's
+// bundle says "Brave", AeroSpace says "Brave Browser"). A running app's
+// name is exactly what AeroSpace reports, so that's used when there is one.
+// Every field can be fixed in the window's Advanced section.
+func suggestedLauncherEntry(for app: InstalledApp) -> [String: Any] {
+    let runningName = NSWorkspace.shared.runningApplications
+        .first { $0.bundleURL?.standardizedFileURL.path == app.path }?.localizedName
+    var entry: [String: Any] = [
+        "name": app.displayName,
+        "match": runningName ?? app.bundleName ?? app.fileName,
+        "open": app.fileName,
+    ]
+    // The two apps that need their own "new window" script (see
+    // LauncherApp.newWindowScript in DataModel.swift).
+    switch app.bundleID {
+    case "com.apple.finder": entry["newWindowStyle"] = "finder"
+    case "com.apple.Terminal": entry["newWindowStyle"] = "terminal"
+    default: break
+    }
+    return entry
+}
 
 // The names the rest of the app already used, now reading whatever is
 // currently loaded instead of a value fixed at launch.
