@@ -158,10 +158,10 @@ Open it once (double-click, or `open /Applications/AeroSwitcher.app`). An app yo
 
 Then grant its two permissions, both under **System Settings > Privacy & Security**:
 
-- **Input Monitoring** — needed for it to see Cmd+Tab being pressed at all. Without this, pressing Cmd+Tab does nothing.
+- **Accessibility** — needed for it to catch Cmd+Tab before macOS does. Without this, pressing Cmd+Tab does nothing, or opens the normal macOS switcher. (macOS also has an Input Monitoring page for keyboard access. On the author's Mac AeroSwitcher is only in the Accessibility list and Cmd+Tab works, so Accessibility is the one to switch on. If Cmd+Tab still fails after that, check Input Monitoring too.)
 - **Screen Recording** — needed to take the window thumbnails. Without this, the switcher opens but every tile is blank.
 
-If AeroSwitcher isn't listed under either yet, open it once first (it registers itself the moment it tries to use the permission), then check again.
+If AeroSwitcher isn't in the list yet, press the **+** button under the list, choose AeroSwitcher in your Applications folder, and switch it on.
 
 ![The Setup window with every check ticked](images/setup.png)
 
@@ -233,7 +233,7 @@ Matching app names between the two files is loose (the toml says "Ableton Live",
 
 AeroSwitcher keeps a log of what it did and what failed: **Settings... > General > Show log**, or `~/Library/Logs/AeroSwitcher/AeroSwitcher.log`. The first lines say which version it is. Read through it before sharing it, it contains file paths.
 
-- **Cmd+Tab does nothing** → check Input Monitoring permission is granted to AeroSwitcher.
+- **Cmd+Tab does nothing** → check that Accessibility is switched on for AeroSwitcher (and look at Input Monitoring too).
 - **Switcher opens but thumbnails are blank** → check Screen Recording permission is granted to AeroSwitcher.
 - **New windows don't move to the right workspace, or don't fill the screen** → check AeroSpace is actually running, and that `~/.aerospace.toml` loaded without errors (run `aerospace list-workspaces --all` in Terminal, if that errors, your config has a syntax problem).
 - **Alt+F does nothing, or windows don't resize** → check Accessibility permission (step 8), and double check the folder path inside `.aerospace.toml` matches where you actually put the three script files (step 4).

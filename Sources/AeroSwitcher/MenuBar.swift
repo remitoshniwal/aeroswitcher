@@ -320,9 +320,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             row.isEnabled = clickable
             submenu.addItem(row)
         }
-        row("Input Monitoring (Cmd+Tab)", mark: status.inputMonitoringOK ? "✓" : "✗",
-            url: status.inputPreflight ? nil : "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
-            opensSetup: status.inputPreflight)
+        let cmdTabAllowed = status.accessibilityTrusted || status.inputPreflight
+        row("Accessibility (Cmd+Tab)", mark: status.inputMonitoringOK ? "✓" : "✗",
+            url: cmdTabAllowed ? nil : "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+            opensSetup: cmdTabAllowed)
         row("Screen Recording (thumbnails)", mark: status.screenRecording ? "✓" : "✗",
             url: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
         let installedMark = status.cliPath == nil ? "✗" : (status.needsRestartForCLI ? "!" : "✓")

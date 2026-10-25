@@ -25,7 +25,7 @@ The app's code lives in `Sources/AeroSwitcher/`, one file per part of the app:
 | `HotkeyInterception.swift` | Catching Cmd+Tab before macOS sees it |
 | `MenuBar.swift` | The menu bar icon: workspace name, and its menu |
 | `SettingsWindow.swift` | The settings window (General, Launcher tiles, Keys, Icons) |
-| `SetupHelp.swift` | The setup checks (AeroSpace, Input Monitoring, Screen Recording, recent order) and the Setup window |
+| `SetupHelp.swift` | The setup checks (AeroSpace, Cmd+Tab/Accessibility, Screen Recording, recent order) and the Setup window |
 
 They all build into one app together, so code in one file can use things from another without any extra setup. There's no separate UI framework project, no storyboard, just:
 
@@ -42,7 +42,7 @@ Nothing about this app modifies AeroSpace itself. It just asks AeroSpace questio
 
 `HotkeyManager` uses a `CGEventTap`, a low level hook that sees every keystroke on the Mac before any app does. When it sees Tab pressed while Cmd is held, it swallows that keystroke (so the real system switcher never sees it and never opens) and tells `SwitcherWindowController` to open instead. When Cmd is released, it tells the controller the session is over.
 
-This requires the **Input Monitoring** permission (System Settings > Privacy & Security > Input Monitoring). Without it, the event tap silently fails to see anything.
+This requires the **Accessibility** permission (System Settings > Privacy & Security > Accessibility), because the tap is an active one that swallows the keys. On the author's Mac AeroSwitcher is in the Accessibility list and NOT in the Input Monitoring list, and the tap works (checked 2026-10-26). Apple's developer forums say the same: an active tap needs Accessibility, and Accessibility covers Input Monitoring. Without the permission the tap is not created and Cmd+Tab stays macOS's.
 
 ### Getting the window list
 
@@ -181,7 +181,7 @@ The menu, top to bottom:
 - **Reload config**: reloads config.json and AeroSpace's config together, exactly like `pkill -HUP AeroSwitcher` (see **Reloading**).
 - **Open AeroSpace config**: opens the file AeroSpace says it's using (`aerospace config --config-path`) in its default app.
 - **Settings...**: opens the settings window (see **Settings window**, below). Hold Option while the menu is open and it turns into **Open config.json**, which opens the file itself.
-- **Permissions**: a tick, a cross or a `!` for Input Monitoring, Screen Recording, AeroSpace installed, AeroSpace running and Recent order, from the same check as the Setup window. Clicking a cross opens the right page in System Settings (or the Setup window). **Setup...** at the bottom opens the Setup window. These checks only look, they never pop up a permission request.
+- **Permissions**: a tick, a cross or a `!` for Accessibility (Cmd+Tab), Screen Recording, AeroSpace installed, AeroSpace running and Recent order, from the same check as the Setup window. Clicking a cross opens the right page in System Settings (or the Setup window). **Setup...** at the bottom opens the Setup window. These checks only look, they never pop up a permission request.
 - **Launch at login**: see **Packaging it as your daily-use app**, below.
 - **Hide AeroSpace's icon**: see below.
 - **About AeroSwitcher**: the standard macOS About panel with the version and build number, the commit, AeroSpace's version, a link to the source code and the MIT license, and the copyright line. AeroSpace is asked for its version in the background first, so the panel can take up to 2 seconds to appear when AeroSpace is slow, but nothing freezes while it waits.
@@ -213,18 +213,18 @@ A small window that says what AeroSwitcher is missing, in plain words, with a bu
 
 It opens by itself:
 - On a first launch (when `config.json` didn't exist yet and was just created), with a short welcome that says where the menu is.
-- On any launch where something required is missing: AeroSpace not installed or not running, Input Monitoring, or Screen Recording. If only AeroSpace isn't running yet, it waits up to 15 seconds first, because at login AeroSwitcher can start a few seconds before AeroSpace.
+- On any launch where something required is missing: AeroSpace not installed or not running, the Cmd+Tab permission (Accessibility), or Screen Recording. If only AeroSpace isn't running yet, it waits up to 15 seconds first, because at login AeroSwitcher can start a few seconds before AeroSpace.
 - **Don't show at launch** (stored as `SetupHelpHideAtLaunch` in AeroSwitcher's preferences) stops only this automatic popup. The menu still says "(needs attention)".
 
 The rows:
 - **AeroSpace installed**: whether the `aerospace` command exists in `/opt/homebrew/bin` or `/usr/local/bin`. Buttons: Get AeroSpace (opens the AeroSpace website), Copy install command. When AeroSpace isn't installed and neither `/opt/homebrew/bin/brew` nor `/usr/local/bin/brew` exists, the row also says the command needs Homebrew and adds a Get Homebrew button (opens brew.sh). An AeroSpace installed somewhere unusual may be reported as missing.
 - **AeroSpace running**: asks `aerospace list-workspaces --focused`. Not running, or turned off (with an Enable AeroSpace button). It can't tell whether AeroSpace has its own Accessibility permission.
-- **Input Monitoring**: macOS's answer, and whether the Cmd+Tab hook (the event tap) really started. Button: Open Input Monitoring.
+- **Accessibility (Cmd+Tab)**: whether the Cmd+Tab hook (the event tap) really started, plus macOS's look-only answers for Accessibility and Input Monitoring. Buttons: Open Accessibility, Open Input Monitoring (kept as a second place to look, since it can't be ruled out on every Mac). Allowed but not running shows Restart AeroSwitcher.
 - **Screen Recording**: macOS's answer. Button: Open Screen Recording. If AeroSwitcher is already in the list and switched on but still marked, the hint says to remove it with the minus button and add it again (this can happen after the app's signature changes).
 - **Recent order**: with a current AeroSpace (it has `aerospace subscribe`) this is a tick, AeroSwitcher keeps the history itself and nothing needs adding to AeroSpace's config. Only for an old AeroSpace without `subscribe` is it an optional yellow row (never triggers the popup) that looks for an `on-focus-changed` line containing `aerospace-mru` in AeroSpace's config file. Buttons: Copy line, Open config. If the config already has its own `on-focus-changed` line, the row says to add the command inside that line's brackets instead, because two lines with the same key make AeroSpace refuse the file. AeroSwitcher can read the file but not whether AeroSpace has loaded it.
 - **Accessibility** is not checked. It belongs to AeroSpace, and one app can't read another's permissions. The window only has a button for that page in System Settings.
 
-While the window is open it checks again every 2 seconds and whenever you come back to it, so a cross turns into a tick by itself. If Input Monitoring is granted while the app is running, AeroSwitcher tries to start the Cmd+Tab hook again itself. After you open a System Settings page from a row and come back, a still-red row shows a hint and a **Restart AeroSwitcher** button: macOS often applies Screen Recording only after a restart. Restart waits for the old copy to exit and starts the app again.
+While the window is open it checks again every 2 seconds and whenever you come back to it, so a cross turns into a tick by itself. If Accessibility (or Input Monitoring) is granted while the app is running, AeroSwitcher tries to start the Cmd+Tab hook again itself. After you open a System Settings page from a row and come back, a still-red row shows a hint and a **Restart AeroSwitcher** button: macOS often applies Screen Recording only after a restart. Restart waits for the old copy to exit and starts the app again.
 
 None of this ever uses the macOS calls that pop up a permission dialog (`CGRequest...`, the prompting form of `AXIsProcessTrusted`, or a screen capture).
 
@@ -435,7 +435,7 @@ Built without git (for example from a ZIP download), the build still works and s
 
 ## Permissions this app needs
 
-- **Input Monitoring**: required for the Cmd+Tab interception (`CGEventTap`) to see keystrokes at all.
+- **Accessibility**: required for the Cmd+Tab interception (`CGEventTap`, an active tap that swallows the keys). Input Monitoring is the neighbouring permission, see the Setup window notes above.
 - **Screen Recording**: required for `ScreenCaptureKit` to take window screenshots.
 
 Both are granted per-app in System Settings > Privacy & Security, to AeroSwitcher.app specifically. If thumbnails stop appearing or Cmd+Tab stops responding after a rebuild, check that AeroSwitcher is still listed and enabled under both. The menu bar menu's **Permissions** item and the **Setup window** show both at a glance.

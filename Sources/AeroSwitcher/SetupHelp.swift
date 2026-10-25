@@ -13,14 +13,17 @@ import SwiftUI
 //   - AeroSpace running: asks `aerospace list-workspaces --focused` and reads
 //     the answer (running / "disabled" / "Can't connect"). Reliable. It can't
 //     see whether AeroSpace has its own Accessibility permission.
-//   - Input Monitoring: macOS's look-only answer AND whether the event tap
-//     (the Cmd+Tab hook) really exists.
+//   - Cmd+Tab (shown as Accessibility): whether the event tap (the Cmd+Tab
+//     hook) really exists, plus macOS's look-only answers for Accessibility
+//     (AXIsProcessTrusted) and Input Monitoring. The tap swallows keys, which
+//     macOS files under Accessibility.
 //   - Screen Recording: macOS's look-only answer.
 //   - Recent order: whether AeroSpace's config file has the `on-focus-changed`
 //     line that writes the window history. Only the TEXT of the file can be
 //     read, not whether AeroSpace has loaded it.
-//   - Accessibility (for AeroSpace and the maximize scripts) is NOT checked,
-//     it belongs to another app and can't be read. The window only mentions it.
+//   - AeroSpace's own Accessibility permission (and the maximize scripts') is
+//     NOT checked, it belongs to another app and can't be read. The window
+//     only mentions it.
 //
 // NEVER used here: CGRequestListenEventAccess, CGRequestScreenCaptureAccess,
 // AXIsProcessTrustedWithOptions with the prompt option, or any screen capture.
@@ -59,6 +62,12 @@ struct SetupStatus: Equatable {
     var aerospace: AeroSpaceState = .notInstalled
     var subscribeSupported = true
     var inputPreflight = false
+    // Accessibility for AeroSwitcher itself (look-only answer, never prompts).
+    // The Cmd+Tab hook is an "active" event tap (it swallows the keys), and
+    // macOS files that under Accessibility, not Input Monitoring. Seen on the
+    // owner's Mac: AeroSwitcher is in the Accessibility list and not in the
+    // Input Monitoring list, and Cmd+Tab works.
+    var accessibilityTrusted = false
     var tapRunning = false
     var screenRecording = false
     var hook: RecencyHookState = .notChecked
@@ -97,7 +106,7 @@ struct SetupStatus: Equatable {
     }
 
     var summary: String {
-        "installed=\(cliPath != nil) aerospace=\(aerospace) inputPreflight=\(inputPreflight) tap=\(tapRunning) screenRecording=\(screenRecording) hook=\(hook) subscribe=\(subscribeSupported)"
+        "installed=\(cliPath != nil) aerospace=\(aerospace) inputPreflight=\(inputPreflight) accessibility=\(accessibilityTrusted) tap=\(tapRunning) screenRecording=\(screenRecording) hook=\(hook) subscribe=\(subscribeSupported)"
     }
 }
 
@@ -107,6 +116,7 @@ struct SetupStatus: Equatable {
 func computeSetupStatus(tapRunning: Bool) -> SetupStatus {
     var status = SetupStatus()
     status.inputPreflight = CGPreflightListenEventAccess()
+    status.accessibilityTrusted = AXIsProcessTrusted()
     status.tapRunning = tapRunning
     status.screenRecording = CGPreflightScreenCaptureAccess()
     status.appInstalled = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "bobko.aerospace") != nil
@@ -248,13 +258,14 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
     // never wait). `completion` runs on the main thread with the answer.
     func refresh(completion: ((SetupStatus) -> Void)? = nil) {
         if let completion { waiting.append(completion) }
-        // Input Monitoring was granted but the Cmd+Tab hook isn't running:
-        // try making it now, so no restart is needed if macOS allows it.
-        // Only when macOS says "allowed", because trying without
-        // permission could pop a macOS dialog every couple of seconds.
-        if CGPreflightListenEventAccess(), let hotkeys, !hotkeys.isRunning {
+        // Accessibility (or Input Monitoring) was granted but the Cmd+Tab hook
+        // isn't running: try making it now, so no restart is needed if macOS
+        // allows it. Only when macOS says "allowed" (both questions are
+        // look-only), because trying without permission could pop a macOS
+        // dialog every couple of seconds.
+        if CGPreflightListenEventAccess() || AXIsProcessTrusted(), let hotkeys, !hotkeys.isRunning {
             hotkeys.start(retry: true)
-            if hotkeys.isRunning { logInfo("Setup: Cmd+Tab hook started after Input Monitoring was granted, no restart needed.") }
+            if hotkeys.isRunning { logInfo("Setup: Cmd+Tab hook started after the permission was granted, no restart needed.") }
         }
         guard !refreshing else { return }
         refreshing = true
@@ -280,6 +291,7 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
     func statusForMenu() -> SetupStatus? {
         guard var status = latest else { return nil }
         status.inputPreflight = CGPreflightListenEventAccess()
+        status.accessibilityTrusted = AXIsProcessTrusted()
         status.tapRunning = hotkeys?.isRunning ?? false
         status.screenRecording = CGPreflightScreenCaptureAccess()
         return status
@@ -440,22 +452,28 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
                 detail: "Unexpected answer: \(message)"))
         }
 
-        // 3. Input Monitoring
+        // 3. Cmd+Tab (Accessibility). The row id stays "input" because the
+        // opened/returned bookkeeping uses it. Accessibility is the page that
+        // matters for the hook, Input Monitoring stays as a second button
+        // because it can't be ruled out for every Mac.
         if s.inputMonitoringOK {
-            rows.append(SetupRow(id: "input", mark: .good, title: "Input Monitoring", detail: "Cmd+Tab is handled by AeroSwitcher."))
-        } else if s.inputPreflight {
-            rows.append(SetupRow(id: "input", mark: .warning, title: "Input Monitoring",
+            rows.append(SetupRow(id: "input", mark: .good, title: "Accessibility (Cmd+Tab)", detail: "Cmd+Tab is handled by AeroSwitcher."))
+        } else if s.accessibilityTrusted || s.inputPreflight {
+            rows.append(SetupRow(id: "input", mark: .warning, title: "Accessibility (Cmd+Tab)",
                 detail: "Allowed, but the Cmd+Tab hook hasn't started. Restart AeroSwitcher.",
                 buttons: [restartButton]))
         } else {
             var hint = removeAndAdd
-            var buttons = [openPane("input", "Open Input Monitoring", Self.inputMonitoringURL)]
+            var buttons = [
+                openPane("input", "Open Accessibility", Self.accessibilityURL),
+                openPane("input", "Open Input Monitoring", Self.inputMonitoringURL),
+            ]
             if returned.contains("input") {
-                hint = "Still marked after switching it on? Restart AeroSwitcher."
+                hint = "Still marked after switching it on? Restart AeroSwitcher. If it still fails, look at Input Monitoring too."
                 buttons.append(restartButton)
             }
-            rows.append(SetupRow(id: "input", mark: .bad, title: "Input Monitoring",
-                detail: "Required for Cmd+Tab. Switch AeroSwitcher on in the list, or add it with the plus button.",
+            rows.append(SetupRow(id: "input", mark: .bad, title: "Accessibility (Cmd+Tab)",
+                detail: "Required for Cmd+Tab. Switch AeroSwitcher on in the Accessibility list, or add it with the plus button.",
                 hint: hint, buttons: buttons))
         }
 
@@ -628,7 +646,7 @@ struct SetupView: View {
     private var accessibilityNote: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Accessibility").font(.headline)
-            Text("AeroSpace needs this to move windows. AeroSwitcher can't check it. If windows aren't being managed, look here.")
+            Text("AeroSwitcher needs it for Cmd+Tab (checked above). AeroSpace needs it too, to move windows, and AeroSwitcher can't check that one. If windows aren't being managed, look here.")
                 .font(.callout).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Button("Open Accessibility") { help.openAccessibilitySettings() }.accessibilityLabel("Open Accessibility")

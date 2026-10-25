@@ -70,7 +70,7 @@ open /Applications/AeroSwitcher.app
 An app you build yourself normally opens without any macOS warning, because it never came from the internet. If macOS does say it can't verify the developer (for example if someone sends you an already built copy), go to **System Settings > Privacy & Security**, scroll down to the message about AeroSwitcher and press **Open Anyway**. The old right-click then **Open** trick no longer works for apps that aren't signed by a paid Apple Developer account on recent macOS versions. AeroSwitcher isn't signed that way yet, which is why it is source only for now.
 
 **5. Grant two permissions** in **System Settings > Privacy & Security**:
-- **Input Monitoring**, so it can catch Cmd+Tab
+- **Accessibility**, so it can catch Cmd+Tab (macOS counts a key hook that can swallow Cmd+Tab as Accessibility)
 - **Screen Recording**, for the window thumbnails
 
 If anything is missing, AeroSwitcher opens a Setup window that says what and has a button for each fix. Then quit and reopen AeroSwitcher, hold Cmd and press Tab. You should see your current workspace's windows.
@@ -114,7 +114,7 @@ Changes from the settings window apply at once, and hand edits as soon as you sa
 
 ## If something doesn't work
 
-- **Cmd+Tab still opens the normal macOS switcher:** Input Monitoring is missing. Open the Setup window (menu bar menu, **Permissions**).
+- **Cmd+Tab still opens the normal macOS switcher:** Accessibility is missing. Open the Setup window (menu bar menu, **Permissions**).
 - **The panel opens but the cards are blank:** Screen Recording is missing. Same window. Screen Recording sometimes only works after AeroSwitcher is restarted, and Setup has a button for that.
 - **Permissions are asked for again after a rebuild:** `build.sh` printed a note that it signed ad hoc, because the `AeroSwitcherCodeSign` certificate from step 3 is missing or was made with another name.
 - **A grey tile doesn't open its app:** the tile's **Open name** in **Settings > Launcher tiles** has to be the app's name as macOS knows it. The alert that appears says what macOS answered.
