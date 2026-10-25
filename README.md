@@ -110,7 +110,9 @@ If you want to use it, note that the config and `toggle-maximize.sh` contain the
 ```
 aeroswitcher/
 ├── Package.swift                    Swift package definition (macOS 14+)
-├── Info.plist                       App settings (no Dock icon)
+├── Info.plist                       App settings (no Dock icon, version, icon name)
+├── AppIcon.icns                     The app icon (made by make-icon.swift)
+├── make-icon.swift                  Redraws AppIcon.icns, only needed to change the icon
 ├── build.sh                         Builds, wraps into AeroSwitcher.app, signs
 ├── Sources/AeroSwitcher/
 │   ├── main.swift                   Start-up: load order and launching the app

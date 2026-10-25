@@ -373,6 +373,14 @@ This part isn't AeroSwitcher code at all, it's entirely `~/.aerospace.toml` plus
 - **No vertical scrolling within a normal switcher page.** If a single Cmd+Tab page somehow still ends up too tall (extremely unlikely at normal window counts, since `maxRows` already caps it), there's no vertical scroll as a fallback, only pagination. The Cmd+\` overview does have one, for when a single workspace is too big for the panel (see the overview section above), and it scrolls with S/W (macOS 15+) or two fingers.
 - **A deprecation warning on every build, and that's expected.** `build.sh` will print a warning about `fullPath(forApplication:)` being deprecated, pointing at `resolvedAppIcon` in `Config.swift` (the function that finds a QUIT app's real icon by name, for the greyed launcher row's automatic icons). This is intentional, not a mistake left behind: Apple's suggested replacement needs a bundle identifier, but config.json only ever has app names/paths (`match`/`open`), never bundle identifiers, so there's no non-deprecated API that does the same name-based lookup. The build still succeeds and the app works normally, this warning is cosmetic. The only way to avoid it entirely would be replacing this one lookup with a manual scan of `/Applications`, `/System/Applications`, and `~/Applications` instead of asking macOS directly, which trades a clean build log for missing apps installed in less common locations, judged not worth it.
 
+## App icon
+
+The icon is three window cards in a row with the middle one selected (a light blue outline), the same picture as the Cmd+Tab panel, on a graphite rounded square. `AppIcon.icns` in the project folder is the finished file; `build.sh` copies it into `AeroSwitcher.app/Contents/Resources/` and `Info.plist` points at it with `CFBundleIconFile`. The build stops with an error if the file is missing.
+
+`make-icon.swift` draws it. It is only needed to change the icon: edit the colors or card sizes at the top, run `swift make-icon.swift` in the project folder, and commit the new `AppIcon.icns`. It draws every size macOS needs (16 to 1024 pixels) and packs them with Apple's `iconutil`.
+
+The icon shows in the About panel, in System Settings (Login Items, and the Input Monitoring and Screen Recording lists) and in alerts. There is no Dock icon, so the Dock never shows it. macOS may show the new icon only after it has refreshed its icon cache. If your Mac's icon style is set to Tinted (System Settings > Appearance), macOS recolors this icon to match, as it does for any app that doesn't ship its own tinted version.
+
 ## Version numbers
 
 Three numbers, shown in the About panel and printed on the first line when the app starts (`AeroSwitcher 0.9.0 (build 57, a1b2c3d)`):

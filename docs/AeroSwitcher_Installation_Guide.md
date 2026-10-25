@@ -106,6 +106,7 @@ Swift Package Manager (the build system used here) expects a specific folder str
 AeroSwitcher/
 ├── Package.swift
 ├── Info.plist
+├── AppIcon.icns
 ├── build.sh
 └── Sources/
     └── AeroSwitcher/
