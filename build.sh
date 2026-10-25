@@ -2,7 +2,6 @@
 set -e
 
 APP_NAME="AeroSwitcher"
-BUILD_DIR=".build/release"
 APP_BUNDLE="$APP_NAME.app"
 
 # Which identity to sign with is decided first, before the slow build, so a
@@ -39,13 +38,26 @@ else
     FELL_BACK=1
 fi
 
-echo "Building..."
-swift build -c release
+# Which kinds of Mac the app is built for. By default both: arm64 (Apple
+# silicon) and x86_64 (Intel), joined into one "universal" program, so one
+# download runs on either. Each kind is compiled on its own, into its own
+# folder under .build, and then glued together with `lipo`. (The one-command
+# way, `swift build --arch arm64 --arch x86_64`, needs the full Xcode app,
+# this works with just the Command Line Tools.) To build only for the Mac you
+# are on, which is quicker, run: ARCHS=arm64 ./build.sh   (or ARCHS=x86_64).
+ARCHS="${ARCHS:-arm64 x86_64}"
+BINARIES=()
+for ARCH in $ARCHS; do
+    echo "Building for $ARCH..."
+    swift build -c release --triple "$ARCH-apple-macosx14.0" --scratch-path ".build/$ARCH"
+    BINARIES+=(".build/$ARCH/$ARCH-apple-macosx/release/$APP_NAME")
+done
 
 echo "Assembling app bundle..."
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
-cp "$BUILD_DIR/$APP_NAME" "$APP_BUNDLE/Contents/MacOS/"
+lipo -create "${BINARIES[@]}" -output "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
+echo "Architectures: $(lipo -archs "$APP_BUNDLE/Contents/MacOS/$APP_NAME")"
 cp Info.plist "$APP_BUNDLE/Contents/Info.plist"
 # The app icon (AppIcon.icns, made by make-icon.swift). Info.plist's
 # CFBundleIconFile points at it by name. `set -e` above stops the build here

@@ -140,7 +140,9 @@ chmod +x build.sh
 ./build.sh
 ```
 
-This runs `swift build -c release` (compiles the Swift code), wraps the result into a real `.app` bundle with the right `Info.plist`, and signs it (with the certificate from step 5a if you made one, otherwise ad hoc, and it tells you). If it finishes with `Done. Built: AeroSwitcher.app`, you now have a working app sitting right there in that folder.
+This compiles the Swift code twice, once for Apple silicon Macs and once for Intel Macs (`swift build -c release`), joins the two into one program with `lipo`, wraps the result into a real `.app` bundle with the right `Info.plist`, and signs it (with the certificate from step 5a if you made one, otherwise ad hoc, and it tells you). If it finishes with `Done. Built: AeroSwitcher.app`, you now have a working app sitting right there in that folder.
+
+The first build takes a couple of minutes because of the two compiles, later ones are quicker. If you only ever use this one Mac, `ARCHS=arm64 ./build.sh` (Apple silicon) or `ARCHS=x86_64 ./build.sh` (Intel) builds just your half.
 
 If it fails instead, the error is almost always a plain Swift compile error (typo, missing brace) printed right above the failure, read it before assuming something bigger is wrong.
 

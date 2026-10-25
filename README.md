@@ -30,7 +30,7 @@ If you use AeroSpace workspaces to keep things apart (school in one, music in an
 
 ## Requirements
 
-- macOS 14 (Sonoma) or newer
+- macOS 14 (Sonoma) or newer, on an Apple silicon or an Intel Mac (the build makes one app that runs on both)
 - [AeroSpace](https://github.com/nikitabobko/AeroSpace), installed with Homebrew
 - Xcode Command Line Tools, to build it (`xcode-select --install`)
 
@@ -168,7 +168,8 @@ aeroswitcher/
 ## Development
 
 ```bash
-./build.sh                                     # build AeroSwitcher.app in this folder
+./build.sh                                     # build AeroSwitcher.app in this folder (Apple silicon and Intel, about two minutes the first time)
+ARCHS=arm64 ./build.sh                         # same, only for an Apple silicon Mac, quicker for everyday testing
 pkill AeroSwitcher                             # stop the running copy (or Quit in its menu)
 AeroSwitcher.app/Contents/MacOS/AeroSwitcher   # run it from Terminal to see its log output live
 tail -f ~/Library/Logs/AeroSwitcher/AeroSwitcher.log   # or follow the log file of a normally opened copy
