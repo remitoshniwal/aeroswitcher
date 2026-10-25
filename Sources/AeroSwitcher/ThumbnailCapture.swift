@@ -1,5 +1,6 @@
 import Cocoa
 import ScreenCaptureKit
+import UniformTypeIdentifiers
 
 // MARK: - Thumbnail capture
 
@@ -111,47 +112,80 @@ func captureThumbnail(scWindow: SCWindow) async -> NSImage? {
     }
 }
 
+// What a card shows when there is no screenshot of its window: the app's own
+// icon, centred, on a transparent card-sized canvas (the card draws its dark
+// background behind it). Instant, no screen capture involved. Used when macOS
+// failed or timed out on this window's screenshot, so the window stays
+// reachable with Cmd+Tab instead of silently vanishing from the list.
+func iconPlaceholder(forAppPID pid: Int32) -> NSImage {
+    let icon = NSRunningApplication(processIdentifier: pid)?.icon
+        ?? NSWorkspace.shared.icon(for: .applicationBundle)
+    // A bit under half the card's height, so it reads as "the app" rather
+    // than a huge blurry thumbnail. Change the 0.5 to make it bigger or smaller.
+    let side = captureTargetSize.height * 0.5
+    return NSImage(size: captureTargetSize, flipped: false) { rect in
+        icon.draw(in: NSRect(x: rect.midX - side / 2, y: rect.midY - side / 2, width: side, height: side),
+                  from: .zero, operation: .sourceOver, fraction: 1)
+        return true
+    }
+}
+
 // Captures every window fresh, every time, concurrently rather than one at
 // a time. No cache — every card you see is a real screenshot from the
 // instant you pressed Cmd+Tab, nothing stale. What keeps this fast is
 // captureThumbnail's small capture resolution above plus doing every
 // window's capture in parallel here via withTaskGroup, not a cache trading
 // correctness for speed.
+//
+// Windows that macOS lists but whose screenshot fails or times out get an
+// icon card (iconPlaceholder) rather than disappearing. A window macOS's
+// list doesn't contain at all is still left out, as before. If the whole
+// window list is unavailable (content == nil, for example macOS's screenshot
+// service is stuck), every window gets an icon card, so Cmd+Tab still opens.
 @available(macOS 14.0, *)
 func captureAll(_ windows: [AeroWindow], content: SCShareableContent?) async -> [ThumbnailItem] {
-    guard let content = content else { return [] }
+    guard let content = content else {
+        if !windows.isEmpty {
+            logWarn("No screenshots available, showing app icons for \(windows.count) window(s)")
+        }
+        return windows.map {
+            ThumbnailItem(id: $0.id, appPID: $0.appPID, appName: $0.displayName, image: iconPlaceholder(forAppPID: $0.appPID))
+        }
+    }
 
     var scByID: [CGWindowID: SCWindow] = [:]
     for w in content.windows {
         scByID[w.windowID] = w
     }
 
-    let captured: [(AeroWindow, NSImage)] = await withTaskGroup(of: (AeroWindow, NSImage?).self) { group in
+    // image == nil here means "macOS knows this window but the screenshot
+    // failed or timed out", windows macOS doesn't know are not in the result.
+    let captured: [(AeroWindow, NSImage?)] = await withTaskGroup(of: (AeroWindow, NSImage?)?.self) { group in
         for w in windows {
             group.addTask {
-                guard let cgID = CGWindowID(w.id), let scWindow = scByID[cgID] else { return (w, nil) }
+                guard let cgID = CGWindowID(w.id), let scWindow = scByID[cgID] else { return nil }
                 // `?? nil`: withTimeout gives nil for "no answer", and the
-                // capture itself gives nil for "failed", both mean no card.
+                // capture itself gives nil for "failed", both mean no screenshot.
                 let image = await withTimeout(seconds: screenshotServiceTimeout, label: "Screenshot of a window") {
                     await captureThumbnail(scWindow: scWindow)
                 } ?? nil
                 return (w, image)
             }
         }
-        var collected: [(AeroWindow, NSImage)] = []
-        for await (w, img) in group where img != nil {
-            collected.append((w, img!))
+        var collected: [(AeroWindow, NSImage?)] = []
+        for await result in group {
+            if let result { collected.append(result) }
         }
         return collected
     }
 
     var resultByID: [String: ThumbnailItem] = [:]
     for (w, img) in captured {
-        resultByID[w.id] = ThumbnailItem(id: w.id, appPID: w.appPID, appName: w.displayName, image: img)
+        resultByID[w.id] = ThumbnailItem(id: w.id, appPID: w.appPID, appName: w.displayName,
+                                         image: img ?? iconPlaceholder(forAppPID: w.appPID))
     }
 
-    // Original (already MRU-sorted) order, dropping any window whose capture
-    // failed outright rather than showing a broken card.
+    // Original (already MRU-sorted) order.
     return windows.compactMap { resultByID[$0.id] }
 }
 
