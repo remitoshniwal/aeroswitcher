@@ -137,6 +137,8 @@ Page Up/Down always select the first tile of the page they land on (real window 
 
 ## All-workspaces overview (Cmd+\`)
 
+![The overview](images/overview.png)
+
 The normal switcher is deliberately scoped to just your current workspace, that's the whole point of this app over stock Cmd+Tab. But sometimes you just want to glance at everything that's open, across every workspace, without hunting through them one at a time, so Cmd+\` (the backtick key, top-left of the keyboard, no Shift needed — the same physical key macOS's own "cycle this app's windows" shortcut uses) opens a second, completely different panel for exactly that.
 
 Cmd+\` only does anything from cold. Pressed while a switcher (either one) is already open, it's ignored rather than trying to switch modes mid-session.
@@ -205,6 +207,8 @@ Instead, **Hide AeroSpace's icon** pushes it off the screen, the same trick menu
 
 ## Setup window
 
+![The Setup window](images/setup.png)
+
 A small window that says what AeroSwitcher is missing, in plain words, with a button that goes to the right place. **Setup...** in the menu (under Permissions) and **Open Setup...** on the Settings window's General tab open it any time.
 
 It opens by itself:
@@ -225,6 +229,8 @@ While the window is open it checks again every 2 seconds and whenever you come b
 None of this ever uses the macOS calls that pop up a permission dialog (`CGRequest...`, the prompting form of `AXIsProcessTrusted`, or a screen capture).
 
 ## Settings window
+
+![Settings, Keys tab](images/settings-keys.png)
 
 **Settings...** in the menu bar menu opens a window that can change everything config.json can, so the file never has to be edited by hand (it still can be). Four tabs:
 
@@ -409,6 +415,8 @@ In the code, `logInfo`, `logWarn`, `logError` and `logDebug` (in `Logging.swift`
 
 ## App icon
 
+![The About panel with the icon](images/about.png)
+
 The icon is three window cards in a row with the middle one selected (a light blue outline), the same picture as the Cmd+Tab panel, on a graphite rounded square. `AppIcon.icns` in the project folder is the finished file; `build.sh` copies it into `AeroSwitcher.app/Contents/Resources/` and `Info.plist` points at it with `CFBundleIconFile`. The build stops with an error if the file is missing.
 
 `make-icon.swift` draws it. It is only needed to change the icon: edit the colors or card sizes at the top, run `swift make-icon.swift` in the project folder, and commit the new `AppIcon.icns`. It draws every size macOS needs (16 to 1024 pixels) and packs them with Apple's `iconutil`.
@@ -439,7 +447,7 @@ There's a third permission the setup as a whole needs, **Accessibility**, but it
 A few things worth doing once, when you're ready to stop rebuilding and just leave a final version running:
 
 1. **Move the built `.app` to `/Applications`.** It'll run from anywhere, but `/Applications` is the standard, expected location, and it's where Login Items and Spotlight expect to find things.
-2. **Re-grant permissions on that final copy.** Since it's ad-hoc signed (not a paid Developer ID), macOS ties Input Monitoring and Screen Recording to the exact signed binary. Moving or rebuilding it can make macOS treat it as "new" and ask again, so do one full test (open the switcher, confirm thumbnails and Cmd+Tab both work) after moving it, before you rely on it daily.
+2. **Check the permissions on that final copy.** `build.sh` signs with your own certificate (`AeroSwitcherCodeSign`, see the installation guide), and macOS ties Input Monitoring and Screen Recording to the app's name plus that certificate, not to the exact file. So rebuilding or moving the app keeps the permissions, as long as you keep using the same certificate. Do one full test after moving it anyway (open the switcher, confirm thumbnails and Cmd+Tab both work) before you rely on it daily.
 3. **Start it at login.** Open AeroSwitcher from `/Applications`, then tick **Launch at login** in its menu bar menu (or in the settings window). This uses Apple's own login item API (`SMAppService`) and shows up in System Settings > General > Login Items & Extensions. It refuses to change this from a copy outside an Applications folder, in either direction: macOS remembers the path, so a login item pointing at a build folder would break, and a test build turning it off would remove the installed app's login item (they count as the same app). Adding it by hand there (click "+" under "Open at Login") also still works, and macOS treats that hand-made entry as the same login item: the menu shows it ticked. Either way, no separate LaunchAgent is needed. If AeroSwitcher somehow gets started twice at login, the second copy quits by itself.
-4. **Stop rebuilding it after that.** Every rebuild changes its code signature, which is exactly the kind of thing that resets the permissions above. Once you've got the version you're happy with, treat it as done rather than a work in progress you keep touching.
+4. **Rebuilding is safe, with one rule.** A rebuild changes the file but not the signing rule, so the permissions survive. The rule is that the certificate must stay the same. If it's deleted or you make a new one with another name, every rebuild counts as a new app and macOS asks for both permissions again. After any rebuild, check the Setup window once.
 5. **Optional sanity check**: log out and back in once (or restart) after setting up Login Items, just to confirm it actually launches on its own before you stop thinking about it.

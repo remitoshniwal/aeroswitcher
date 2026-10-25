@@ -4,6 +4,10 @@
 
 If you use AeroSpace workspaces to keep things apart (school in one, music in another, games in a third), the stock macOS Cmd+Tab ignores all of that and shows everything at once. AeroSwitcher replaces it with a switcher that stays inside the workspace you're in.
 
+![The AeroSwitcher panel: one card per window in the current workspace, grey launcher tiles for apps that aren't open yet](docs/images/switcher.png)
+
+*The panel shows real window pictures for the workspace you're in. The grey row at the bottom is apps you've assigned to this workspace but haven't opened yet. (Made with dummy windows. The icons look purple because the screenshot's Mac uses macOS's tinted icon style.)*
+
 ## Features
 
 - **Workspace-scoped Cmd+Tab.** Real window thumbnails, one card per window (not per app), in most-recently-used order.
@@ -13,6 +17,16 @@ If you use AeroSpace workspaces to keep things apart (school in one, music in an
 - **Settings window.** Launcher tiles (pick apps from a list), keys (press a key to record it), custom icons (one by one, or a whole folder of images named after your apps at once) and the other options, without editing a file. Changes apply instantly.
 - **One menu bar icon.** Shows the workspace you're in, with a menu that covers what AeroSpace's own icon does: switch workspaces, enable or disable AeroSpace, reload both configs, open the settings, check permissions, launch at login, quit. It can also hide AeroSpace's icon (by pushing it off screen, since AeroSpace quits if its icon is switched off).
 - **Lightweight.** No Dock icon, and nothing else on screen until you press Cmd+Tab. It only talks to AeroSpace through its command line tool and never changes AeroSpace itself.
+
+## What it looks like
+
+**The Cmd+\` overview** lists every workspace with the apps open in it. It's for looking only, nothing in it is clickable.
+
+![The overview: each workspace as a row of app icons with a count badge when an app has more than one window](docs/images/overview.png)
+
+**The settings window** edits your launcher tiles, keys and icons without opening a file. Changes apply at once.
+
+![Settings, Launcher tiles tab: a list of workspaces on the left, the apps with grey tiles in the chosen workspace on the right](docs/images/settings-launcher-tiles.png)
 
 ## Requirements
 
@@ -63,6 +77,12 @@ If anything is missing, AeroSwitcher opens a Setup window that says what and has
 
 **6. Optional: start it at login.** Open `/Applications/AeroSwitcher.app` and tick **Launch at login** in its menu bar menu.
 
+## First launch: the Setup window
+
+If something AeroSwitcher needs is missing, it opens a **Setup** window on launch. Each line has a tick when it's fine, and a button to fix it when it isn't (open the right System Settings page, start AeroSpace, restart AeroSwitcher). The ticks update by themselves while the window is open. You can open it again any time from the menu bar menu under **Permissions > Setup...** or from **Settings > General**.
+
+![The Setup window with every check ticked](docs/images/setup.png)
+
 ## Using it
 
 | Keys | What it does |
@@ -91,6 +111,14 @@ On first launch AeroSwitcher creates `~/Library/Application Support/AeroSwitcher
 - hide the small status text under launcher tiles
 
 Changes from the settings window apply at once, and hand edits as soon as you save the file, no restart needed. The settings window only changes the part you touched, so hand edits are never lost (its first save tidies the file's layout once, and keeps a `config.json.backup`). If something in it is wrong, a small window says what. The "Config file" section of the [documentation](docs/AeroSwitcher_Documentation.md) has the full format and examples.
+
+## If something doesn't work
+
+- **Cmd+Tab still opens the normal macOS switcher:** Input Monitoring is missing. Open the Setup window (menu bar menu, **Permissions**).
+- **The panel opens but the cards are blank:** Screen Recording is missing. Same window. Screen Recording sometimes only works after AeroSwitcher is restarted, and Setup has a button for that.
+- **Permissions are asked for again after a rebuild:** the `AeroSwitcherCodeSign` certificate from step 3 is missing or was made with another name.
+- **A grey tile doesn't open its app:** the tile's **Open name** in **Settings > Launcher tiles** has to be the app's name as macOS knows it. The alert that appears says what macOS answered.
+- **Anything else:** the log has the details. **Settings > General > Show log**, or `~/Library/Logs/AeroSwitcher/AeroSwitcher.log`. When you report a problem, paste the first lines of it too, they say which version you run.
 
 ## Optional: the full-screen window setup
 
@@ -152,7 +180,7 @@ If Cmd+Tab stops responding or thumbnails go blank after a rebuild, check the tw
 
 ## Credits
 
-Built on top of [AeroSpace](https://github.com/nikitabobko/AeroSpace) by Nikita Bobko, which does all the actual window management.
+Built on top of [AeroSpace](https://github.com/nikitabobko/AeroSpace) by Nikita Bobko, which does all the actual window management. AeroSwitcher is a separate project and is not made by or affiliated with the AeroSpace author.
 
 ## License
 

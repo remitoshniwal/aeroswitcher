@@ -159,9 +159,13 @@ Then grant its two permissions, both under **System Settings > Privacy & Securit
 
 If AeroSwitcher isn't listed under either yet, open it once first (it registers itself the moment it tries to use the permission), then check again.
 
+![The Setup window with every check ticked](images/setup.png)
+
 You don't have to remember any of this: if a permission, AeroSpace itself, or the recent-order line in `.aerospace.toml` (step 3) is missing, AeroSwitcher opens its **Setup** window on launch, says what is missing and has a button for each fix. It's also in the menu bar menu under **Permissions > Setup...**. Ticks appear by themselves once you've fixed something. Screen Recording sometimes only takes effect after a restart, the window has a button for that.
 
 **Test it now**, before moving on: hold Cmd and press Tab. You should see a row of window thumbnails for whatever's open in your current AeroSpace workspace.
+
+![The switcher panel](images/switcher.png)
 
 ## 7. Set up the config file
 
@@ -179,7 +183,7 @@ Separately from AeroSwitcher's own two permissions above, the fullscreen/maximiz
 
 ## 9. Run AeroSwitcher automatically at login
 
-Once you're happy with everything above and don't expect to rebuild again soon (rebuilding resets code signing identity checks in some edge cases, so treat this as a "final" step):
+You can do this whenever you like. Rebuilding later is fine too: the permissions survive a rebuild as long as it's signed with the same certificate from step 5a.
 
 Open `/Applications/AeroSwitcher.app`, click its workspace name in the menu bar, and tick **Launch at login** (also in **Settings...** > General). (It only allows this from an Applications folder, because macOS remembers where the app was.) Adding it by hand in **System Settings > General > Login Items & Extensions** under "Open at Login" works too; the menu then shows it ticked.
 
