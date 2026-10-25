@@ -52,7 +52,7 @@ brew install --cask nikitabobko/tap/aerospace
 on-focus-changed = ['exec-and-forget /bin/sh -c "mkdir -p /tmp/aerospace-mru && echo $AEROSPACE_WINDOW_ID >> /tmp/aerospace-mru/$(aerospace list-workspaces --focused).log"']
 ```
 
-**3. Create a code signing certificate (once).** This keeps macOS from asking for permissions again every time you rebuild. Open **Keychain Access**, choose **Keychain Access > Certificate Assistant > Create a Certificate...**, and fill in:
+**3. Optional but recommended: create a code signing certificate (once).** Without it `build.sh` still works, but it signs the app ad hoc and says so, and then macOS asks for the permissions again after every rebuild. With it, the permissions survive rebuilds. If you only build once, you can skip this. Open **Keychain Access**, choose **Keychain Access > Certificate Assistant > Create a Certificate...**, and fill in:
 - Name: `AeroSwitcherCodeSign` (exactly this)
 - Identity Type: Self Signed Root
 - Certificate Type: Code Signing
@@ -116,7 +116,7 @@ Changes from the settings window apply at once, and hand edits as soon as you sa
 
 - **Cmd+Tab still opens the normal macOS switcher:** Input Monitoring is missing. Open the Setup window (menu bar menu, **Permissions**).
 - **The panel opens but the cards are blank:** Screen Recording is missing. Same window. Screen Recording sometimes only works after AeroSwitcher is restarted, and Setup has a button for that.
-- **Permissions are asked for again after a rebuild:** the `AeroSwitcherCodeSign` certificate from step 3 is missing or was made with another name.
+- **Permissions are asked for again after a rebuild:** `build.sh` printed a note that it signed ad hoc, because the `AeroSwitcherCodeSign` certificate from step 3 is missing or was made with another name.
 - **A grey tile doesn't open its app:** the tile's **Open name** in **Settings > Launcher tiles** has to be the app's name as macOS knows it. The alert that appears says what macOS answered.
 - **Anything else:** the log has the details. **Settings > General > Show log**, or `~/Library/Logs/AeroSwitcher/AeroSwitcher.log`. When you report a problem, paste the first lines of it too, they say which version you run.
 

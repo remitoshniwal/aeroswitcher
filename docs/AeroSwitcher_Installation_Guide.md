@@ -84,7 +84,9 @@ chmod +x "~/Library/Application Support/AeroSpace/toggle-maximize.sh"
 
 AeroSwitcher is the actual switcher app, the Cmd+Tab replacement. It's built from source, since it's a personal project and not something Apple's signed and notarized for wide distribution.
 
-**5a. Create a stable code-signing certificate (do this once, before your first build).**
+**5a. Optional but recommended: create a stable code-signing certificate (do this once, before your first build).**
+
+You can skip this step. If `build.sh` finds no certificate named `AeroSwitcherCodeSign`, it signs the app ad hoc and prints a note saying so. The app works, but macOS counts every rebuild as a new app and asks for Input Monitoring and Screen Recording again each time. If you plan to build more than once, do this step.
 
 Normally, every time you rebuild a Swift app, macOS treats the new build as a completely different, unrecognized app and resets any permissions you'd already granted it (Input Monitoring, Screen Recording), forcing you to re-approve them every single time. A self-signed certificate in your own Mac's Keychain sidesteps this: as long as you keep signing new builds with the *same* certificate, macOS keeps treating them as "the same app" and permissions survive rebuilds.
 
@@ -138,7 +140,7 @@ chmod +x build.sh
 ./build.sh
 ```
 
-This runs `swift build -c release` (compiles the Swift code), wraps the result into a real `.app` bundle with the right `Info.plist`, and signs it with the certificate from step 5a. If it finishes with `Done. Built: AeroSwitcher.app`, you now have a working app sitting right there in that folder.
+This runs `swift build -c release` (compiles the Swift code), wraps the result into a real `.app` bundle with the right `Info.plist`, and signs it (with the certificate from step 5a if you made one, otherwise ad hoc, and it tells you). If it finishes with `Done. Built: AeroSwitcher.app`, you now have a working app sitting right there in that folder.
 
 If it fails instead, the error is almost always a plain Swift compile error (typo, missing brace) printed right above the failure, read it before assuming something bigger is wrong.
 
@@ -233,4 +235,4 @@ AeroSwitcher keeps a log of what it did and what failed: **Settings... > General
 - **Switcher opens but thumbnails are blank** → check Screen Recording permission is granted to AeroSwitcher.
 - **New windows don't move to the right workspace, or don't fill the screen** → check AeroSpace is actually running, and that `~/.aerospace.toml` loaded without errors (run `aerospace list-workspaces --all` in Terminal, if that errors, your config has a syntax problem).
 - **Alt+F does nothing, or windows don't resize** → check Accessibility permission (step 8), and double check the folder path inside `.aerospace.toml` matches where you actually put the three script files (step 4).
-- **Permissions keep resetting on every rebuild** → you likely skipped step 5a (the stable Keychain certificate), or `build.sh` is signing with a different certificate name than what's actually in Keychain Access.
+- **Permissions keep resetting on every rebuild** → you likely skipped step 5a (the stable Keychain certificate). `build.sh` says "signed ad hoc" when it can't find the certificate, so look for that note in its output, and check the certificate is named exactly `AeroSwitcherCodeSign` in Keychain Access.
