@@ -510,9 +510,14 @@ final class SettingsStore {
             } else {
                 // Added to the last report and shown in the problems window,
                 // so it isn't only a line in the log nobody reads.
-                lastReport.warning("AeroSwitcher can't watch \(path) for changes, so saving it won't reload it by itself. Use Reload config in the menu, or restart AeroSwitcher.")
-                MainActor.assumeIsolated {
-                    ConfigProblemsWindow.shared.update(report: lastReport, aerospace: nil)
+                // Two retry chains can run side by side after a file swap,
+                // so the same warning is only added once.
+                let message = "AeroSwitcher can't watch \(path) for changes, so saving it won't reload it by itself. Use Reload config in the menu, or restart AeroSwitcher."
+                if !lastReport.warnings.contains(message) {
+                    lastReport.warning(message)
+                    MainActor.assumeIsolated {
+                        ConfigProblemsWindow.shared.update(report: lastReport, aerospace: nil)
+                    }
                 }
             }
             return
