@@ -217,7 +217,7 @@ It opens by itself:
 - **Don't show at launch** (stored as `SetupHelpHideAtLaunch` in AeroSwitcher's preferences) stops only this automatic popup. The menu still says "(needs attention)".
 
 The rows:
-- **AeroSpace installed**: whether the `aerospace` command exists in `/opt/homebrew/bin` or `/usr/local/bin`. Buttons: Get AeroSpace (opens the AeroSpace website), Copy install command. An AeroSpace installed somewhere unusual may be reported as missing.
+- **AeroSpace installed**: whether the `aerospace` command exists in `/opt/homebrew/bin` or `/usr/local/bin`. Buttons: Get AeroSpace (opens the AeroSpace website), Copy install command. When AeroSpace isn't installed and neither `/opt/homebrew/bin/brew` nor `/usr/local/bin/brew` exists, the row also says the command needs Homebrew and adds a Get Homebrew button (opens brew.sh). An AeroSpace installed somewhere unusual may be reported as missing.
 - **AeroSpace running**: asks `aerospace list-workspaces --focused`. Not running, or turned off (with an Enable AeroSpace button). It can't tell whether AeroSpace has its own Accessibility permission.
 - **Input Monitoring**: macOS's answer, and whether the Cmd+Tab hook (the event tap) really started. Button: Open Input Monitoring.
 - **Screen Recording**: macOS's answer. Button: Open Screen Recording. If AeroSwitcher is already in the list and switched on but still marked, the hint says to remove it with the minus button and add it again (this can happen after the app's signature changes).

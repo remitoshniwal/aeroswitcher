@@ -209,6 +209,7 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
     private static let screenRecordingURL = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
     private static let accessibilityURL = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
     private static let aerospaceGuideURL = "https://nikitabobko.github.io/AeroSpace/guide"
+    private static let homebrewURL = "https://brew.sh"
     static let installCommand = "brew install --cask nikitabobko/tap/aerospace"
 
     @Published private(set) var latest: SetupStatus?
@@ -379,15 +380,30 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
             let detail = s.appInstalled
                 ? "The app is installed, but its aerospace command wasn't found. Reinstalling with Homebrew links it."
                 : "AeroSwitcher needs AeroSpace to see which windows are in each workspace."
+            // The install command above only works if Homebrew is installed,
+            // and a Mac that has never had developer tools often doesn't have
+            // it. So when neither usual Homebrew place has it, say so and
+            // offer its website. (Only a look at two file paths, nothing runs.)
+            let hasHomebrew = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
+                .contains { FileManager.default.isExecutableFile(atPath: $0) }
+            var installButtons = [
+                SetupButton(title: "Get AeroSpace") {
+                    logInfo("Setup: open \(Self.aerospaceGuideURL)")
+                    NSWorkspace.shared.open(URL(string: Self.aerospaceGuideURL)!)
+                },
+                SetupButton(title: "Copy install command") { Self.copy(Self.installCommand) },
+            ]
+            if !hasHomebrew && !s.appInstalled {
+                installButtons.append(SetupButton(title: "Get Homebrew") {
+                    logInfo("Setup: open \(Self.homebrewURL)")
+                    NSWorkspace.shared.open(URL(string: Self.homebrewURL)!)
+                })
+            }
             rows.append(SetupRow(id: "installed", mark: .bad, title: "AeroSpace installed", detail: detail,
+                hint: (hasHomebrew || s.appInstalled) ? nil
+                    : "The command above needs Homebrew, which this Mac doesn't seem to have. Install it from brew.sh first, then run the command in Terminal.",
                 codeBlock: Self.installCommand,
-                buttons: [
-                    SetupButton(title: "Get AeroSpace") {
-                        logInfo("Setup: open \(Self.aerospaceGuideURL)")
-                        NSWorkspace.shared.open(URL(string: Self.aerospaceGuideURL)!)
-                    },
-                    SetupButton(title: "Copy install command") { Self.copy(Self.installCommand) },
-                ]))
+                buttons: installButtons))
         }
 
         // 2. AeroSpace running
