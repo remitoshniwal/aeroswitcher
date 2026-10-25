@@ -147,7 +147,7 @@ func appSupportDirectory() -> URL {
     do {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     } catch {
-        print("Couldn't create \(dir.path): \(error)")
+        logError("Couldn't create \(dir.path): \(error)")
     }
     return dir
 }
@@ -179,7 +179,7 @@ func writeConfig(_ config: SwitcherConfig, to url: URL) {
         let data = try encoder.encode(config)
         try data.write(to: url)
     } catch {
-        print("Couldn't write default config to \(url.path): \(error)")
+        logError("Couldn't write default config to \(url.path): \(error)")
     }
 }
 
@@ -199,12 +199,12 @@ final class ConfigReport {
 
     func error(_ message: String) {
         errors.append(message)
-        print("Config error: \(message)")
+        logError("Config error: \(message)")
     }
 
     func warning(_ message: String) {
         warnings.append(message)
-        print("Config warning: \(message)")
+        logWarn("Config warning: \(message)")
     }
 }
 
@@ -224,7 +224,7 @@ func readConfigFile(report: ConfigReport) -> SwitcherConfig? {
         // AeroSwitcher_Documentation.md for a filled-in example to copy from.
         writeConfig(defaultSwitcherConfig, to: url)
         firstRunThisLaunch = true  // the setup help window shows its welcome text (SetupHelp.swift)
-        print("Created \(url.path). Add your own workspace apps to it (see AeroSwitcher_Documentation.md for an example) and save it, AeroSwitcher picks up changes by itself.")
+        logInfo("Created \(url.path). Add your own workspace apps to it (see AeroSwitcher_Documentation.md for an example) and save it, AeroSwitcher picks up changes by itself.")
         return defaultSwitcherConfig
     }
     let data: Data
@@ -442,7 +442,7 @@ final class SettingsStore {
             lock.lock()
             loaded = newSettings
             lock.unlock()
-            if report.isClean { print("Reloaded config.json, no problems.") }
+            if report.isClean { logInfo("Reloaded config.json, no problems.") }
         } else {
             report.keptPreviousSettings = true
         }
@@ -474,7 +474,7 @@ final class SettingsStore {
     // results end up in the same problems window. AeroSpace's reload runs
     // off the main thread, it's a separate program and takes a moment.
     func reloadTogether() {
-        print("Reload requested: reloading config.json and AeroSpace's config together.")
+        logInfo("Reload requested: reloading config.json and AeroSpace's config together.")
         let report = reload()
         Task.detached {
             let aerospaceResult = reloadAeroSpaceConfig()
@@ -508,7 +508,7 @@ final class SettingsStore {
                     self?.armFileWatcher(attempt: attempt + 1)
                 }
             } else {
-                print("Couldn't watch \(path) for changes, auto reload is off until AeroSwitcher restarts.")
+                logWarn("Couldn't watch \(path) for changes, auto reload is off until AeroSwitcher restarts.")
             }
             return
         }
@@ -539,7 +539,7 @@ final class SettingsStore {
         pendingAutoReload?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            print("config.json changed, reloading.")
+            logInfo("config.json changed, reloading.")
             let report = self.reload()
             MainActor.assumeIsolated {
                 ConfigProblemsWindow.shared.update(report: report, aerospace: nil)
@@ -672,7 +672,7 @@ func editConfigFile(_ description: String, touching paths: [[String]], shownTree
     do {
         _ = try JSONDecoder().decode(SwitcherConfig.self, from: data)
     } catch {
-        print("Settings: refused \"\(description)\", the result wouldn't load: \(describeDecodingError(error))")
+        logWarn("Settings: refused \"\(description)\", the result wouldn't load: \(describeDecodingError(error))")
         return .refused("That change would leave config.json unable to load, so it wasn't saved. (\(describeDecodingError(error)))")
     }
     if !configBackupMadeThisRun {
@@ -680,7 +680,7 @@ func editConfigFile(_ description: String, touching paths: [[String]], shownTree
         do {
             try original.write(to: backupURL, options: .atomic)
             configBackupMadeThisRun = true
-            print("Settings: copied config.json to \(backupURL.path) before the first change.")
+            logInfo("Settings: copied config.json to \(backupURL.path) before the first change.")
         } catch {
             return .refused("Couldn't make the backup copy \(backupURL.path), so nothing was changed. (\(error.localizedDescription))")
         }
@@ -693,7 +693,7 @@ func editConfigFile(_ description: String, touching paths: [[String]], shownTree
     } catch {
         return .refused("Couldn't save config.json: \(error.localizedDescription)")
     }
-    print("Settings: \(description)")
+    logInfo("Settings: \(description)")
     // Applied right away, even with autoReloadConfig turned off: that
     // setting is about hand edits, the window's changes always apply.
     let report = settings.reload()
@@ -1106,10 +1106,10 @@ func launchApp(_ app: LauncherApp) {
                 // idea why" and an actual error message to go look up.
                 if process.terminationStatus != 0 {
                     let errText = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-                    print("launchApp: AppleScript for \(app.displayName) failed: \(errText)")
+                    logError("launchApp: AppleScript for \(app.displayName) failed: \(errText)")
                 }
             } catch {
-                print("launchApp: couldn't run osascript for \(app.displayName): \(error)")
+                logError("launchApp: couldn't run osascript for \(app.displayName): \(error)")
             }
         }
         return

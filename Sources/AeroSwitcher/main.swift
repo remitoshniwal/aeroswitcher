@@ -5,10 +5,16 @@ import ScreenCaptureKit
 // GUI apps launched from Terminal don't always line-buffer stdout the way
 // plain command-line tools do, which can make print() output show up late
 // or out of order when you're trying to watch it live. Forcing line
-// buffering here means every print() appears the moment it runs.
+// buffering here means every line (logInfo and friends print too, see
+// Logging.swift) appears the moment it runs.
 setvbuf(stdout, nil, _IOLBF, 0)
 
-print(appVersionText())
+// The first lines of every run, in the log and on screen: which build this
+// is and where it runs, so a log pasted into a bug report says what it came from.
+logInfo(appVersionText())
+logInfo("macOS \(ProcessInfo.processInfo.operatingSystemVersionString), app at \(Bundle.main.bundlePath)"
+    + (ProcessInfo.processInfo.environment["AEROSWITCHER_CONFIG_DIR"].map { ", TEST COPY with config folder \($0)" } ?? ""))
+logInfo("Log file: \(logFileURL().path)")
 
 // MARK: - One copy only
 //
@@ -34,7 +40,8 @@ if ProcessInfo.processInfo.environment["AEROSWITCHER_CONFIG_DIR"] == nil,
         waited += 0.1
     }
     if otherCopyRunning() {
-        print("Another AeroSwitcher is already running, quitting this copy.")
+        logWarn("Another AeroSwitcher is already running, quitting this copy.")
+        flushLog()
         exit(0)
     }
 }
@@ -58,6 +65,7 @@ if ProcessInfo.processInfo.environment["AEROSWITCHER_CONFIG_DIR"] == nil,
 // keeps everything happening at launch, in the same order as before the
 // split. If you add a new shared `let` in another file that does real work
 // when it's created (reads a file, prints, loads images), add it here too.
+_ = appLogger  // already used above, listed so the rule is visible: it opens the log file
 _ = aerospacePath
 _ = cardSize
 _ = displayScale
@@ -108,6 +116,12 @@ Task { @MainActor in
     // Anything wrong in config.json at launch gets the same window a
     // reload would show, instead of only a print nobody sees.
     ConfigProblemsWindow.shared.update(report: settings.lastReport, aerospace: nil)
+}
+
+// AeroSpace's version goes into the log too (asked in the background, it's a
+// separate program and can take a moment, and start-up must never wait for it).
+Task.detached {
+    logInfo(getAeroSpaceVersionText().replacingOccurrences(of: "\n", with: ", "))
 }
 
 app.run()

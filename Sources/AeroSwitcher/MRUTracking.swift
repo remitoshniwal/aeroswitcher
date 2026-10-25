@@ -130,7 +130,7 @@ class MRUTracker {
         // Which history was read, so it can be seen in the log. When both
         // exist they hold the same ids, the own file is just the hook's
         // file without the shell.
-        print("Recent order \(workspace): using \(historyPath(for: workspace) == ownLogPath(for: workspace) ? "AeroSwitcher's own" : "the hook's") history")
+        logDebug("Recent order \(workspace): using \(historyPath(for: workspace) == ownLogPath(for: workspace) ? "AeroSwitcher's own" : "the hook's") history")
         func rank(_ id: String) -> Int {
             recent.firstIndex(of: id) ?? Int.max
         }
@@ -192,7 +192,7 @@ class AppWorkspaceTracker {
         do {
             try JSONEncoder().encode(mapping).write(to: fileURL)
         } catch {
-            print("Couldn't save \(fileURL.path): \(error)")
+            logWarn("Couldn't save \(fileURL.path): \(error)")
         }
     }
 }

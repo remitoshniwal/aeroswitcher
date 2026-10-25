@@ -253,7 +253,7 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
         // permission could pop a macOS dialog every couple of seconds.
         if CGPreflightListenEventAccess(), let hotkeys, !hotkeys.isRunning {
             hotkeys.start(retry: true)
-            if hotkeys.isRunning { print("Setup: Cmd+Tab hook started after Input Monitoring was granted, no restart needed.") }
+            if hotkeys.isRunning { logInfo("Setup: Cmd+Tab hook started after Input Monitoring was granted, no restart needed.") }
         }
         guard !refreshing else { return }
         refreshing = true
@@ -263,7 +263,7 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
             await MainActor.run {
                 self.refreshing = false
                 if result != self.latest {
-                    print("Setup check: \(result.summary)")
+                    logInfo("Setup check: \(result.summary)")
                     self.latest = result
                     NotificationCenter.default.post(name: .setupStatusChanged, object: nil)
                 }
@@ -303,13 +303,13 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
                 return
             }
             if firstRunThisLaunch {
-                print("Setup: first launch, showing the setup window")
+                logInfo("Setup: first launch, showing the setup window")
                 present(welcome: true, activate: false)
             } else if !status.requiredMissing.isEmpty && !hideAtLaunch {
-                print("Setup: something required is missing (\(status.requiredMissing)), showing the setup window")
+                logInfo("Setup: something required is missing (\(status.requiredMissing)), showing the setup window")
                 present(welcome: false, activate: false)
             } else if !status.requiredMissing.isEmpty {
-                print("Setup: something required is missing (\(status.requiredMissing)), window hidden by \"Don't show at launch\"")
+                logInfo("Setup: something required is missing (\(status.requiredMissing)), window hidden by \"Don't show at launch\"")
             }
         }
     }
@@ -346,7 +346,7 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.refresh() }
         }
-        print("Setup: window shown")
+        logInfo("Setup: window shown")
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -354,7 +354,7 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
         timer = nil
         opened = []
         returned = []
-        print("Setup: window closed")
+        logInfo("Setup: window closed")
     }
 
     func close() { window?.close() }
@@ -383,7 +383,7 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
                 codeBlock: Self.installCommand,
                 buttons: [
                     SetupButton(title: "Get AeroSpace") {
-                        print("Setup: open \(Self.aerospaceGuideURL)")
+                        logInfo("Setup: open \(Self.aerospaceGuideURL)")
                         NSWorkspace.shared.open(URL(string: Self.aerospaceGuideURL)!)
                     },
                     SetupButton(title: "Copy install command") { Self.copy(Self.installCommand) },
@@ -402,7 +402,7 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
                 buttons: [SetupButton(title: "Enable AeroSpace") { [weak self] in
                     Task.detached {
                         let result = setAeroSpaceEnabled(true)
-                        print("Setup: aerospace enable on: \(result.ok ? "ok" : "failed") \(result.output)")
+                        logInfo("Setup: aerospace enable on: \(result.ok ? "ok" : "failed") \(result.output)")
                         await MainActor.run { self?.refresh() }
                     }
                 }]))
@@ -411,7 +411,7 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
                 detail: "Not running. No windows will show until it is.",
                 hint: "Starting AeroSpace re-applies its window rules, so windows may move.",
                 buttons: [SetupButton(title: "Open AeroSpace") {
-                    print("Setup: open AeroSpace")
+                    logInfo("Setup: open AeroSpace")
                     if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "bobko.aerospace") {
                         NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
                     } else {
@@ -461,10 +461,10 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
         let openConfig = SetupButton(title: "Open config") { [weak self] in
             if let path = self?.latest?.configPath ?? Optional(NSHomeDirectory() + "/.aerospace.toml"),
                FileManager.default.fileExists(atPath: path) {
-                print("Setup: open \(path)")
+                logInfo("Setup: open \(path)")
                 NSWorkspace.shared.open(URL(fileURLWithPath: path))
             } else {
-                print("Setup: no AeroSpace config file to open")
+                logWarn("Setup: no AeroSpace config file to open")
                 NSSound.beep()
             }
         }
@@ -507,20 +507,20 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
     private func openPane(_ key: String, _ title: String, _ url: String) -> SetupButton {
         SetupButton(title: title) { [weak self] in
             self?.opened.insert(key)
-            print("Setup: open System Settings page \(url)")
+            logInfo("Setup: open System Settings page \(url)")
             NSWorkspace.shared.open(URL(string: url)!)
         }
     }
 
     func openAccessibilitySettings() {
-        print("Setup: open System Settings page \(Self.accessibilityURL)")
+        logInfo("Setup: open System Settings page \(Self.accessibilityURL)")
         NSWorkspace.shared.open(URL(string: Self.accessibilityURL)!)
     }
 
     static func copy(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
-        print("Setup: copied to the clipboard")
+        logInfo("Setup: copied to the clipboard")
     }
 
     // MARK: Restart
@@ -544,10 +544,10 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
         helper.arguments = ["-c", script]
         do {
             try helper.run()
-            print("Setup: restarting AeroSwitcher")
+            logInfo("Setup: restarting AeroSwitcher")
             NSApp.terminate(nil)
         } catch {
-            print("Setup: couldn't start the restart helper: \(error)")
+            logError("Setup: couldn't start the restart helper: \(error)")
             NSSound.beep()
         }
     }

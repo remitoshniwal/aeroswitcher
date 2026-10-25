@@ -53,7 +53,7 @@ func captureThumbnail(scWindow: SCWindow) async -> NSImage? {
         let cgImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
         return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
     } catch {
-        print("Capture failed: \(error)")
+        logWarn("Capture failed: \(error)")
         return nil
     }
 }

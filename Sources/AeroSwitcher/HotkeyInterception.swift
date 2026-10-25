@@ -60,7 +60,7 @@ class HotkeyManager {
             userInfo: selfPtr
         ) else {
             if !retry {
-                print("Could not create the event tap. Check System Settings > Privacy & Security > Input Monitoring, AeroSwitcher needs to be allowed there.")
+                logError("Could not create the event tap. Check System Settings > Privacy & Security > Input Monitoring, AeroSwitcher needs to be allowed there.")
                 logPermissionState(tapCreated: false)
             }
             return
@@ -71,7 +71,7 @@ class HotkeyManager {
         let runLoopSource = CFMachPortCreateRunLoopSource(nil, tap, 0)
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
-        print("Cmd+Tab is now handled by AeroSwitcher. Press Ctrl+C here to stop and restore normal Cmd+Tab.")
+        logInfo("Cmd+Tab is now handled by AeroSwitcher. Press Ctrl+C here to stop and restore normal Cmd+Tab.")
     }
 
     // What macOS says about the permissions next to whether the tap could be
@@ -80,7 +80,7 @@ class HotkeyManager {
     // on. All three are look-only calls: none of them can pop a dialog
     // (AXIsProcessTrusted without the "prompt" option never does).
     private func logPermissionState(tapCreated: Bool) {
-        print("Setup check at launch: Input Monitoring preflight=\(CGPreflightListenEventAccess()), Accessibility trusted=\(AXIsProcessTrusted()), event tap created=\(tapCreated)")
+        logInfo("Setup check at launch: Input Monitoring preflight=\(CGPreflightListenEventAccess()), Accessibility trusted=\(AXIsProcessTrusted()), event tap created=\(tapCreated)")
     }
 
     func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {

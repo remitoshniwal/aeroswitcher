@@ -11,10 +11,10 @@ import Cocoa
 let aerospacePath: String = {
     if let path = findAerospaceCLI() { return path }
     if let override = testAerospaceOverride() {
-        print("Test setup: the fake aerospace at \(override) doesn't exist, so AeroSpace counts as not installed.")
+        logWarn("Test setup: the fake aerospace at \(override) doesn't exist, so AeroSpace counts as not installed.")
         return override
     }
-    print("Couldn't find the aerospace CLI at any of the usual locations (\(aerospaceCandidatePaths.joined(separator: ", "))). AeroSwitcher needs AeroSpace (https://github.com/nikitabobko/AeroSpace) installed to do anything at all.")
+    logError("Couldn't find the aerospace CLI at any of the usual locations (\(aerospaceCandidatePaths.joined(separator: ", "))). AeroSwitcher needs AeroSpace (https://github.com/nikitabobko/AeroSpace) installed to do anything at all.")
     return aerospaceCandidatePaths[0]  // fall back to the most common one so every aerospace call below fails the same obvious way, instead of crashing differently depending on which one ran first
 }()
 
@@ -84,7 +84,7 @@ func getWindows(scope: String) -> [AeroWindow] {
         try process.run()
         process.waitUntilExit()
     } catch {
-        print("Failed to run aerospace: \(error)")
+        logWarn("Failed to run aerospace: \(error)")
         return []
     }
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
@@ -281,7 +281,7 @@ func reloadAeroSpaceConfig() -> AeroSpaceReloadResult {
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
     let output = (String(data: data, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-    print("aerospace reload-config: exit \(process.terminationStatus)\(output.isEmpty ? "" : ", \(output)")")
+    logInfo("aerospace reload-config: exit \(process.terminationStatus)\(output.isEmpty ? "" : ", \(output)")")
     return AeroSpaceReloadResult(ok: process.terminationStatus == 0, output: output)
 }
 
@@ -322,7 +322,7 @@ func runAerospace(_ arguments: [String], timeout: TimeInterval = 2) -> (ok: Bool
     }
     if exited.wait(timeout: .now() + timeout) == .timedOut {
         process.terminate()
-        print("aerospace \(arguments.joined(separator: " ")) took longer than \(timeout)s and was stopped.")
+        logWarn("aerospace \(arguments.joined(separator: " ")) took longer than \(timeout)s and was stopped.")
         return (false, "timed out")
     }
     _ = finishedReading.wait(timeout: .now() + 1)
@@ -425,10 +425,10 @@ final class AeroSpaceEventStream: @unchecked Sendable {
     func start() {
         wanted = true
         if aerospaceSupportsSubscribe() {
-            print("AeroSpace events: using `aerospace subscribe`.")
+            logInfo("AeroSpace events: using `aerospace subscribe`.")
             connect()
         } else {
-            print("AeroSpace events: this AeroSpace has no `subscribe` command, checking the workspace once a second instead.")
+            logInfo("AeroSpace events: this AeroSpace has no `subscribe` command, checking the workspace once a second instead.")
             startPolling()
         }
     }
@@ -446,7 +446,7 @@ final class AeroSpaceEventStream: @unchecked Sendable {
     private func setConnected(_ value: Bool) {
         guard connected != value else { return }
         connected = value
-        print("AeroSpace events: \(value ? "connected" : "connection lost")")
+        logInfo("AeroSpace events: \(value ? "connected" : "connection lost")")
         onConnection?(value)
     }
 
@@ -474,7 +474,7 @@ final class AeroSpaceEventStream: @unchecked Sendable {
             try child.run()
             process = child
         } catch {
-            print("AeroSpace events: couldn't start `aerospace subscribe`: \(error.localizedDescription)")
+            logError("AeroSpace events: couldn't start `aerospace subscribe`: \(error.localizedDescription)")
             scheduleReconnect()
         }
     }
@@ -494,10 +494,10 @@ final class AeroSpaceEventStream: @unchecked Sendable {
     private func handle(line: String) {
         guard let json = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
               let event = json["_event"] as? String else {
-            print("AeroSpace events: `aerospace subscribe` said: \(line)")
+            logWarn("AeroSpace events: `aerospace subscribe` said: \(line)")
             return
         }
-        print("AeroSpace event: \(line)")
+        logDebug("AeroSpace event: \(line)")
         setConnected(true)
         switch event {
         case "focused-workspace-changed":
@@ -516,7 +516,7 @@ final class AeroSpaceEventStream: @unchecked Sendable {
 
     private func ended(_ finished: Process) {
         guard finished === process else { return }
-        print("AeroSpace events: `aerospace subscribe` ended (exit \(finished.terminationStatus)).")
+        logWarn("AeroSpace events: `aerospace subscribe` ended (exit \(finished.terminationStatus)).")
         process = nil
         setConnected(false)
         scheduleReconnect()

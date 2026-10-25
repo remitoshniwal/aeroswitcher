@@ -95,7 +95,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             signal(signalNumber, SIG_IGN)
             let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: .global())
             source.setEventHandler { [stream] in
+                logInfo("Quit by signal \(signalNumber)")
                 stream.stop()
+                flushLog()
                 exit(0)
             }
             source.resume()
@@ -104,6 +106,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [stream] _ in
             stream.stop()
+            logInfo("Quitting")
+            flushLog()
         }
     }
 
@@ -339,7 +343,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func permissionRowClicked(_ sender: NSMenuItem) {
         if let string = sender.representedObject as? String, !string.isEmpty, let url = URL(string: string) {
-            print("Menu: open System Settings page \(string)")
+            logInfo("Menu: open System Settings page \(string)")
             NSWorkspace.shared.open(url)
         } else {
             setupHelpClicked()
@@ -347,7 +351,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     @objc private func setupHelpClicked() {
-        print("Menu: setup help")
+        logInfo("Menu: setup help")
         SetupHelp.shared.show()
     }
 
@@ -355,17 +359,17 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func workspaceClicked(_ sender: NSMenuItem) {
         guard let name = sender.representedObject as? String else { return }
-        print("Menu: switch to workspace \(name)")
+        logInfo("Menu: switch to workspace \(name)")
         switchToWorkspace(name)
         // The bar updates when AeroSpace reports the switch (the event).
     }
 
     @objc private func toggleEnabledClicked() {
         let enable = !aerospaceEnabled
-        print("Menu: \(enable ? "enable" : "disable") AeroSpace")
+        logInfo("Menu: \(enable ? "enable" : "disable") AeroSpace")
         Task.detached {
             let result = setAeroSpaceEnabled(enable)
-            print("aerospace enable \(enable ? "on" : "off"): \(result.ok ? "ok" : "failed") \(result.output)")
+            logInfo("aerospace enable \(enable ? "on" : "off"): \(result.ok ? "ok" : "failed") \(result.output)")
             await MainActor.run {
                 if result.ok { self.aerospaceEnabled = enable }
                 self.updateBar()
@@ -374,12 +378,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     @objc private func reloadClicked() {
-        print("Menu: reload config")
+        logInfo("Menu: reload config")
         settings.reloadTogether()
     }
 
     @objc private func openAeroSpaceConfigClicked() {
-        print("Menu: open AeroSpace config")
+        logInfo("Menu: open AeroSpace config")
         Task.detached {
             // Ask AeroSpace where its config is; if it can't answer, the
             // usual place.
@@ -389,19 +393,19 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                     NSWorkspace.shared.open(URL(fileURLWithPath: path))
                 } else {
                     NSSound.beep()
-                    print("No AeroSpace config found at \(path).")
+                    logWarn("No AeroSpace config found at \(path).")
                 }
             }
         }
     }
 
     @objc private func openConfigJSONClicked() {
-        print("Menu: open config.json")
+        logInfo("Menu: open config.json")
         NSWorkspace.shared.open(configFileURL())
     }
 
     @objc private func settingsClicked() {
-        print("Menu: settings")
+        logInfo("Menu: settings")
         SettingsWindow.shared.show()
     }
 
@@ -423,7 +427,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     @objc func launchAtLoginClicked() {
         defer { NotificationCenter.default.post(name: .menuBarTogglesChanged, object: nil) }
         let service = SMAppService.mainApp
-        print("Menu: launch at login clicked, status was \(service.status)")
+        logInfo("Menu: launch at login clicked, status was \(service.status)")
         let path = Bundle.main.bundlePath
         let inApplications = path.hasPrefix("/Applications/") || path.hasPrefix(NSHomeDirectory() + "/Applications/")
         // Both ways, not just turning it on: a test copy in the project
@@ -431,7 +435,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         // ID), so turning it OFF there would quietly remove the real one.
         // That happened once while testing the settings window.
         guard inApplications else {
-            print("Launch at login: refused, this copy is in \(path)")
+            logWarn("Launch at login: refused, this copy is in \(path)")
             alert("Launch at login only works from the Applications folder",
                   "This copy of AeroSwitcher is in \(path). Change Launch at login from the copy in /Applications, so the login item always points at the right place.")
             return
@@ -449,9 +453,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                     SMAppService.openSystemSettingsLoginItems()
                 }
             }
-            print("Launch at login: status is now \(service.status)")
+            logInfo("Launch at login: status is now \(service.status)")
         } catch {
-            print("Launch at login failed: \(error)")
+            logError("Launch at login failed: \(error)")
             alert("Couldn't change Launch at login", error.localizedDescription)
         }
     }
@@ -529,13 +533,13 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         }
         divider?.length = wide ? 3000 : NSStatusItem.variableLength
         divider?.button?.title = wide ? "" : "│"
-        print("Divider: \(wide ? "wide, hiding the icons on its left" : "showing as │")")
+        logInfo("Divider: \(wide ? "wide, hiding the icons on its left" : "showing as │")")
     }
 
     private func removeDivider() {
         if let divider { NSStatusBar.system.removeStatusItem(divider) }
         divider = nil
-        print("Divider: removed, AeroSpace's icon is visible again")
+        logInfo("Divider: removed, AeroSpace's icon is visible again")
     }
 
     // Not private, for the same reason as launchAtLoginClicked: the settings
@@ -543,12 +547,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     @objc func hideAeroSpaceIconClicked() {
         defer { NotificationCenter.default.post(name: .menuBarTogglesChanged, object: nil) }
         if hideAeroSpaceIcon {
-            print("Menu: show AeroSpace's icon again")
+            logInfo("Menu: show AeroSpace's icon again")
             hideAeroSpaceIcon = false
             removeDivider()
             return
         }
-        print("Menu: hide AeroSpace's icon (arranging)")
+        logInfo("Menu: hide AeroSpace's icon (arranging)")
         showDivider(wide: false)
         let alert = NSAlert()
         alert.messageText = "Hide AeroSpace's icon"
@@ -583,7 +587,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     // lines in `showAbout`. The version numbers come from build.sh, see
     // appVersion() in Config.swift.
     @objc private func aboutClicked() {
-        print("Menu: about")
+        logInfo("Menu: about")
         // AeroSpace is asked off the main thread first (the same thread runs
         // the Cmd+Tab hook, and a slow AeroSpace used to freeze it for up to
         // 2 seconds here). The panel opens once there's an answer.
@@ -626,6 +630,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         line("")
         line("Source code on GitHub", link: ("Source code on GitHub", repoURL))
         line("MIT License", link: ("MIT License", repoURL + "/blob/main/LICENSE"))
+        line("Log folder", link: ("Log folder", logDirectoryURL().absoluteString))
 
         var options: [NSApplication.AboutPanelOptionKey: Any] = [.credits: credits]
         if let v = appVersion() {
@@ -637,7 +642,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     @objc private func quitClicked() {
-        print("Menu: quit")
+        logInfo("Menu: quit")
         NSApp.terminate(nil)
     }
 }

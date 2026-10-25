@@ -129,7 +129,7 @@ final class SettingsModel: ObservableObject {
             notice = nil
             return true
         case .refused(let why):
-            print("Settings: not saved: \(why)")
+            logWarn("Settings: not saved: \(why)")
             notice = why
             NSSound.beep()
             return false
@@ -247,7 +247,7 @@ final class SettingsModel: ObservableObject {
             MainActor.assumeIsolated { self?.recorded(event) }
             return nil
         }
-        print("Settings: recording a key for \(action)")
+        logDebug("Settings: recording a key for \(action)")
     }
 
     func stopRecording() {
@@ -263,7 +263,7 @@ final class SettingsModel: ObservableObject {
         }
         stopRecording()
         let code = Int64(event.keyCode)
-        print("Settings: key pressed while recording \(action): code \(code)")
+        logDebug("Settings: key pressed while recording \(action): code \(code)")
         guard let name = keyName(forCode: code) else {
             notice = "AeroSwitcher can't use that key. Pick a letter, a digit, an arrow, Space, Return, Escape, Delete, Page Up or Page Down."
             NSSound.beep()
@@ -450,7 +450,7 @@ final class SettingsModel: ObservableObject {
         }
         let used = Set(matches.map { $0.file })
         let unmatched = files.filter { !used.contains($0) }.map { $0.lastPathComponent }
-        print("Settings: icon folder \(folder.path): \(files.count) images, \(matches.count) matched, unmatched: \(unmatched)")
+        logInfo("Settings: icon folder \(folder.path): \(files.count) images, \(matches.count) matched, unmatched: \(unmatched)")
         return (matches, unmatched)
     }
 }
@@ -489,12 +489,12 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         // the active app, or the window couldn't be typed into.
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
-        print("Settings: window shown")
+        logInfo("Settings: window shown")
     }
 
     func windowWillClose(_ notification: Notification) {
         model.stopRecording()
-        print("Settings: window closed")
+        logInfo("Settings: window closed")
     }
 
     // Copy, paste, select all and undo in text fields are menu shortcuts on
@@ -632,6 +632,19 @@ struct GeneralTab: View {
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([configFileURL()]) }
                     // Same as the menu's Reload config: both AeroSwitcher and AeroSpace.
                     Button("Reload config") { settings.reloadTogether() }
+                }
+            }
+            Section("Log") {
+                Text(logFileURL().path).font(.callout).textSelection(.enabled)
+                Text("What AeroSwitcher did and what went wrong. Look through it before sharing it, it contains file paths.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button("Show log") {
+                    // Selects the file in Finder, or opens the folder if nothing was written yet.
+                    if FileManager.default.fileExists(atPath: logFileURL().path) {
+                        NSWorkspace.shared.activateFileViewerSelecting([logFileURL()])
+                    } else {
+                        NSWorkspace.shared.open(logDirectoryURL())
+                    }
                 }
             }
         }
@@ -871,7 +884,7 @@ struct AppPickerView: View {
                 .compactMap { $0.bundleURL?.standardizedFileURL.path })
             let started = Date()
             let found = await Task.detached { scanInstalledApps() }.value
-            print("Settings: found \(found.count) apps in \(String(format: "%.2f", Date().timeIntervalSince(started)))s")
+            logInfo("Settings: found \(found.count) apps in \(String(format: "%.2f", Date().timeIntervalSince(started)))s")
             runningPaths = running
             apps = found.filter { running.contains($0.path) } + found.filter { !running.contains($0.path) }
         }

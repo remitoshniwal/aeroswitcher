@@ -111,6 +111,7 @@ AeroSwitcher/
 └── Sources/
     └── AeroSwitcher/
         ├── main.swift
+        ├── Logging.swift
         ├── AeroSpaceBridge.swift
         ├── ThumbnailCapture.swift
         ├── DataModel.swift
@@ -221,6 +222,8 @@ osascript -l JavaScript check-drift.js
 Matching app names between the two files is loose (the toml says "Ableton Live", config.json says "Ableton"), so an odd false alarm is possible. If it reports something that's clearly wrong, that matching is the place to look.
 
 ## If something doesn't work
+
+AeroSwitcher keeps a log of what it did and what failed: **Settings... > General > Show log**, or `~/Library/Logs/AeroSwitcher/AeroSwitcher.log`. The first lines say which version it is. Read through it before sharing it, it contains file paths.
 
 - **Cmd+Tab does nothing** → check Input Monitoring permission is granted to AeroSwitcher.
 - **Switcher opens but thumbnails are blank** → check Screen Recording permission is granted to AeroSwitcher.

@@ -116,6 +116,7 @@ aeroswitcher/
 ├── build.sh                         Builds, wraps into AeroSwitcher.app, signs
 ├── Sources/AeroSwitcher/
 │   ├── main.swift                   Start-up: load order and launching the app
+│   ├── Logging.swift                The log file (logInfo, logWarn, logError, logDebug)
 │   ├── AeroSpaceBridge.swift        Calls to the aerospace command line tool
 │   ├── ThumbnailCapture.swift       Window screenshots (ScreenCaptureKit)
 │   ├── DataModel.swift              Basic types, new-window scripts for Finder and Terminal
@@ -141,7 +142,8 @@ aeroswitcher/
 ```bash
 ./build.sh                                     # build AeroSwitcher.app in this folder
 pkill AeroSwitcher                             # stop the running copy (or Quit in its menu)
-AeroSwitcher.app/Contents/MacOS/AeroSwitcher   # run it from Terminal to see its log output
+AeroSwitcher.app/Contents/MacOS/AeroSwitcher   # run it from Terminal to see its log output live
+tail -f ~/Library/Logs/AeroSwitcher/AeroSwitcher.log   # or follow the log file of a normally opened copy
 ```
 
 `build.sh` writes the build number and commit into the app (`Version: 0.9.0 (build 57, a1b2c3d)` at the end of its output); the version itself is the one line in `Info.plist` you edit by hand. The About panel in the menu shows all of it.
