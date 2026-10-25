@@ -154,7 +154,7 @@ mv AeroSwitcher.app /Applications/
 
 `/Applications` is the standard, expected location, Login Items and Spotlight both expect apps to live there.
 
-Open it once (double-click, or `open /Applications/AeroSwitcher.app`). Since it's self-signed rather than from a paid Apple Developer account, macOS will likely warn you it can't verify the developer the very first time. Right-click the app > **Open** > **Open** again in the dialog gets past that (only needed once).
+Open it once (double-click, or `open /Applications/AeroSwitcher.app`). An app you built yourself normally opens with no warning, because it never came from the internet. If macOS does say it can't verify the developer (usually only for an already built copy someone sent you, since AeroSwitcher isn't signed by a paid Apple Developer account), open **System Settings > Privacy & Security**, scroll down to the message about AeroSwitcher and press **Open Anyway** (only needed once). The old right-click > **Open** trick no longer works for such apps on recent macOS.
 
 Then grant its two permissions, both under **System Settings > Privacy & Security**:
 

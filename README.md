@@ -67,7 +67,7 @@ mv AeroSwitcher.app /Applications/
 open /Applications/AeroSwitcher.app
 ```
 
-The first time you open it, macOS may say it can't verify the developer. Right-click the app, choose **Open**, then **Open** again.
+An app you build yourself normally opens without any macOS warning, because it never came from the internet. If macOS does say it can't verify the developer (for example if someone sends you an already built copy), go to **System Settings > Privacy & Security**, scroll down to the message about AeroSwitcher and press **Open Anyway**. The old right-click then **Open** trick no longer works for apps that aren't signed by a paid Apple Developer account on recent macOS versions. AeroSwitcher isn't signed that way yet, which is why it is source only for now.
 
 **5. Grant two permissions** in **System Settings > Privacy & Security**:
 - **Input Monitoring**, so it can catch Cmd+Tab
