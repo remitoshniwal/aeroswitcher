@@ -374,6 +374,22 @@ This part isn't AeroSwitcher code at all, it's entirely `~/.aerospace.toml` plus
 - **No vertical scrolling within a normal switcher page.** If a single Cmd+Tab page somehow still ends up too tall (extremely unlikely at normal window counts, since `maxRows` already caps it), there's no vertical scroll as a fallback, only pagination. The Cmd+\` overview does have one, for when a single workspace is too big for the panel (see the overview section above), and it scrolls with S/W (macOS 15+) or two fingers.
 - **A deprecation warning on every build, and that's expected.** `build.sh` will print a warning about `fullPath(forApplication:)` being deprecated, pointing at `resolvedAppIcon` in `Config.swift` (the function that finds a QUIT app's real icon by name, for the greyed launcher row's automatic icons). This is intentional, not a mistake left behind: Apple's suggested replacement needs a bundle identifier, but config.json only ever has app names/paths (`match`/`open`), never bundle identifiers, so there's no non-deprecated API that does the same name-based lookup. The build still succeeds and the app works normally, this warning is cosmetic. The only way to avoid it entirely would be replacing this one lookup with a manual scan of `/Applications`, `/System/Applications`, and `~/Applications` instead of asking macOS directly, which trades a clean build log for missing apps installed in less common locations, judged not worth it.
 
+## When something goes wrong
+
+The rule: something you clicked that didn't work gets a short message that says what failed and what to do. Something in the background that fails is written to the log (and, for config.json, shown in the config problems window), it doesn't interrupt you.
+
+Messages you can get from a click:
+- **A launcher tile won't open its app** ("Couldn't open Calculator"): macOS said it can't find the app. Check the tile's **Open** name in Settings > Launcher tiles (the name macOS opens the app by, usually its name in the Applications folder).
+- **A Finder or Terminal tile can't make a new window** ("Couldn't open a new Finder window"): the message includes what macOS said. If it says AeroSwitcher is not authorized, allow it under System Settings > Privacy & Security > Automation. (That hint is based on the macOS error code -1743, it hasn't been seen on a real Mac yet.)
+- **Open AeroSpace config, with no config file** ("No AeroSpace config found"): says which file AeroSpace reads. Same in the Setup window's Open config button.
+- **Setup window: Open AeroSpace or Restart AeroSwitcher fails**: says what to open or quit by hand.
+- **Settings: an empty Name, Match or Open field**: the old value is put back and the notice at the top of the window says why.
+- **Launch at login, Hide AeroSpace's icon, swapping a key**: unchanged, they already had alerts.
+
+Not interrupted, only logged: a window that closed a moment before you picked it, a failed workspace switch, the recent-order history that couldn't be saved. A config.json that can't be watched for changes (so saving it won't reload by itself) is added to the config problems window. Every alert says where the log is.
+
+Cmd+Tab when Screen Recording is off has no message of its own: the Setup window opens at launch for it (unless you ticked **Don't show at launch**) and the menu says **Permissions (needs attention)**. What the panel shows without Screen Recording was not tested.
+
 ## Log file
 
 AeroSwitcher writes down what it does and what goes wrong in `~/Library/Logs/AeroSwitcher/AeroSwitcher.log` (open it from **Settings > General > Log > Show log**, or from the **Log folder** link in the About panel). It's a plain text file, one entry per line:

@@ -415,7 +415,8 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
                     if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "bobko.aerospace") {
                         NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
                     } else {
-                        NSSound.beep()
+                        showFailureAlert("Couldn't find AeroSpace",
+                            "macOS doesn't know where the AeroSpace app is. Open it from the Applications folder, or install it again with Homebrew.")
                     }
                 }]))
         case .unknown(let message):
@@ -465,7 +466,8 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
                 NSWorkspace.shared.open(URL(fileURLWithPath: path))
             } else {
                 logWarn("Setup: no AeroSpace config file to open")
-                NSSound.beep()
+                showFailureAlert("No AeroSpace config found",
+                    "AeroSpace reads ~/.aerospace.toml. Create that file, then try again.")
             }
         }
         if s.cliPath != nil && !s.recentOrderNeedsHook {
@@ -548,7 +550,8 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
             NSApp.terminate(nil)
         } catch {
             logError("Setup: couldn't start the restart helper: \(error)")
-            NSSound.beep()
+            showFailureAlert("Couldn't restart AeroSwitcher",
+                "Quit AeroSwitcher from its menu bar menu and open it again from the Applications folder.")
         }
     }
 }

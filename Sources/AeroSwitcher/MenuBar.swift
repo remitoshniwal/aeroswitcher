@@ -392,8 +392,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                 if FileManager.default.fileExists(atPath: path) {
                     NSWorkspace.shared.open(URL(fileURLWithPath: path))
                 } else {
-                    NSSound.beep()
                     logWarn("No AeroSpace config found at \(path).")
+                    showFailureAlert("No AeroSpace config found",
+                        "AeroSpace reads \(path). Create that file, then try again.")
                 }
             }
         }

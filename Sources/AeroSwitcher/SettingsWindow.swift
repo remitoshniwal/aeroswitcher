@@ -761,15 +761,15 @@ struct TileRow: View {
 
     private var details: some View {
         VStack(alignment: .leading, spacing: 6) {
-            CommitTextField(label: "Name", value: tile.name, required: true) {
+            CommitTextField(label: "Name", value: tile.name, required: true, onRefused: { model.notice = $0 }) {
                 model.setTileField("name", to: $0, at: index, in: workspace)
             }
-            CommitTextField(label: "Match", value: tile.match, required: true) {
+            CommitTextField(label: "Match", value: tile.match, required: true, onRefused: { model.notice = $0 }) {
                 model.setTileField("match", to: $0, at: index, in: workspace)
             }
             Text("The tile hides while a window of an app whose name contains this is open here. It has to match the name AeroSpace uses for the app.")
                 .font(.caption).foregroundStyle(.secondary)
-            CommitTextField(label: "Open", value: tile.open, required: true) {
+            CommitTextField(label: "Open", value: tile.open, required: true, onRefused: { model.notice = $0 }) {
                 model.setTileField("open", to: $0, at: index, in: workspace)
             }
             Text("The name macOS opens the app by, usually its name in the Applications folder.")
@@ -793,6 +793,8 @@ struct CommitTextField: View {
     let label: String
     let value: String
     var required = false
+    // Called with a message when an empty value was refused.
+    var onRefused: ((String) -> Void)? = nil
     let commit: (String) -> Void
     @State private var text = ""
     @FocusState private var focused: Bool
@@ -825,6 +827,7 @@ struct CommitTextField: View {
         if trimmed.isEmpty && required {
             text = value  // can't be empty, put the old value back
             NSSound.beep()
+            onRefused?("\(label) can't be empty, so the old value was put back.")
             return
         }
         if trimmed != value { commit(trimmed) }

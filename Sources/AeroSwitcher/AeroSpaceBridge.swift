@@ -112,7 +112,11 @@ func focusWindow(id: String, pid: Int32? = nil) {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: aerospacePath)
     process.arguments = ["focus", "--window-id", id]
-    try? process.run()
+    do {
+        try process.run()
+    } catch {
+        logWarn("Couldn't run aerospace focus: \(error.localizedDescription)")
+    }
 
     // `aerospace focus` updates AeroSpace's own idea of which window is
     // focused, but that alone doesn't reliably hand back real OS-level
@@ -364,7 +368,11 @@ func switchToWorkspace(_ name: String) {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: aerospacePath)
     process.arguments = ["workspace", name]
-    try? process.run()
+    do {
+        try process.run()
+    } catch {
+        logWarn("Couldn't run aerospace workspace \(name): \(error.localizedDescription)")
+    }
 }
 
 // `aerospace enable on` / `off`. AeroSpace can't be asked whether it is

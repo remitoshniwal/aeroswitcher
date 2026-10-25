@@ -822,3 +822,27 @@ final class ConfigProblemsWindow {
         self.window = window
     }
 }
+
+// MARK: - Alert for a failed action
+//
+// For something you just clicked that didn't work (a launcher tile that
+// wouldn't open, a missing config file). One short title that says what
+// failed, one text that says why and what to do. Background problems never
+// use this, they go to the log (or the problems window), an alert would
+// interrupt you for something you didn't ask for.
+@MainActor
+func showFailureAlert(_ title: String, _ text: String) {
+    logWarn("Alert: \(title). \(text)")
+    let alert = NSAlert()
+    alert.messageText = title
+    alert.informativeText = text
+    alert.addButton(withTitle: "OK")
+    NSApp.activate(ignoringOtherApps: true)
+    alert.runModal()
+}
+
+// What a command printed to stderr, trimmed and cut short for an alert.
+func shortErrorText(_ text: String) -> String {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.count > 300 ? String(trimmed.prefix(300)) + "..." : trimmed
+}

@@ -508,7 +508,12 @@ final class SettingsStore {
                     self?.armFileWatcher(attempt: attempt + 1)
                 }
             } else {
-                logWarn("Couldn't watch \(path) for changes, auto reload is off until AeroSwitcher restarts.")
+                // Added to the last report and shown in the problems window,
+                // so it isn't only a line in the log nobody reads.
+                lastReport.warning("AeroSwitcher can't watch \(path) for changes, so saving it won't reload it by itself. Use Reload config in the menu, or restart AeroSwitcher.")
+                MainActor.assumeIsolated {
+                    ConfigProblemsWindow.shared.update(report: lastReport, aerospace: nil)
+                }
             }
             return
         }
@@ -1085,38 +1090,50 @@ struct LauncherTile: Identifiable {
 }
 
 func launchApp(_ app: LauncherApp) {
-    if let script = app.newWindowScript {
-        // Run off the main actor, since waiting for osascript to finish
-        // (needed below to actually see whether it succeeded) would
-        // otherwise stall the UI thread right as the panel is closing.
-        Task.detached {
-            let process = Process()
+    // Everything runs off the main actor: waiting for the command to finish
+    // (needed to see whether it worked) would otherwise stall the UI thread
+    // right as the panel is closing.
+    Task.detached {
+        let process = Process()
+        let errorPipe = Pipe()
+        process.standardError = errorPipe
+        if let script = app.newWindowScript {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
             process.arguments = script.flatMap { ["-e", $0] }
-            let errorPipe = Pipe()
-            process.standardError = errorPipe
-            do {
-                try process.run()
-                process.waitUntilExit()
-                // AppleScript errors (a bad property name, a typo, etc.)
-                // don't throw in Swift, osascript just exits non-zero and
-                // prints the reason to stderr. The Finder launcher script
-                // silently failed exactly this way once already, so this
-                // print is the difference between "nothing happens, no
-                // idea why" and an actual error message to go look up.
-                if process.terminationStatus != 0 {
-                    let errText = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-                    logError("launchApp: AppleScript for \(app.displayName) failed: \(errText)")
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            process.arguments = ["-a", app.openName]
+        }
+        do {
+            try process.run()
+            // AppleScript errors (a bad property name, a typo, etc.) and a
+            // wrong app name don't throw in Swift, the command just exits
+            // non-zero and prints the reason to stderr. The Finder launcher
+            // script silently failed exactly this way once already, so the
+            // difference between "nothing happens, no idea why" and a real
+            // message is this check.
+            let errText = shortErrorText(String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "")
+            process.waitUntilExit()
+            guard process.terminationStatus != 0 else { return }
+            logError("launchApp: \(app.newWindowScript == nil ? "open -a \(app.openName)" : "AppleScript for \(app.displayName)") failed (exit \(process.terminationStatus)): \(errText)")
+            await MainActor.run {
+                if app.newWindowScript == nil {
+                    showFailureAlert("Couldn't open \(app.displayName)",
+                        "macOS said: \(errText.isEmpty ? "no reason given" : errText)\n\nCheck the Open name of this tile in Settings > Launcher tiles. Details are in the log (Settings > General > Show log).")
+                } else {
+                    // -1743 is macOS saying AeroSwitcher may not control that app yet.
+                    let notAllowed = errText.contains("-1743") || errText.lowercased().contains("not authorized")
+                    showFailureAlert("Couldn't open a new \(app.displayName) window",
+                        "macOS said: \(errText.isEmpty ? "no reason given" : errText)\n\n"
+                        + (notAllowed ? "Allow AeroSwitcher to control \(app.displayName) in System Settings > Privacy & Security > Automation. " : "")
+                        + "Details are in the log (Settings > General > Show log).")
                 }
-            } catch {
-                logError("launchApp: couldn't run osascript for \(app.displayName): \(error)")
+            }
+        } catch {
+            logError("launchApp: couldn't run \(app.newWindowScript == nil ? "open" : "osascript") for \(app.displayName): \(error)")
+            await MainActor.run {
+                showFailureAlert("Couldn't open \(app.displayName)", "AeroSwitcher couldn't start the command that opens apps. \(error.localizedDescription)")
             }
         }
-        return
     }
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-    process.arguments = ["-a", app.openName]
-    try? process.run()
 }
-
