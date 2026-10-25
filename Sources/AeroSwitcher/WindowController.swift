@@ -115,6 +115,10 @@ class SwitcherWindowController: NSObject {
     //     through workspaces, same physical key as everything else that
     //     cycles through something.
     func handleTabPress(reverse: Bool) {
+        // One line per press, so the log shows whether Cmd+Tab reached the app
+        // at all, and whether it was ignored because an earlier open is stuck
+        // (sessionActive / isLoading still true).
+        logInfo("Cmd+Tab pressed: session=\(sessionActive) loading=\(isLoading) open=\(isOpen)")
         guard sessionActive else {
             beginSession(startReversed: reverse)
             return
@@ -162,7 +166,10 @@ class SwitcherWindowController: NSObject {
     }
 
     private func show() {
-        guard !isLoading else { return }
+        guard !isLoading else {
+            logWarn("Switcher: still loading from an earlier press, ignoring this one")
+            return
+        }
         isLoading = true
 
         if showingAllWorkspaces {
@@ -173,6 +180,7 @@ class SwitcherWindowController: NSObject {
         Task { @MainActor in
             defer { isLoading = false }
             guard #available(macOS 14.0, *) else { sessionActive = false; return }
+            let startedAt = Date()
 
             // Asking AeroSpace for the window list (a subprocess), asking
             // ScreenCaptureKit for its shareable-content snapshot, and
@@ -189,7 +197,12 @@ class SwitcherWindowController: NSObject {
             // manually minimized (yellow button) since a minimized window
             // isn't technically "on screen" — since you do minimize things
             // sometimes, that trade wasn't worth it, so it's back to false.
-            async let contentTask: SCShareableContent? = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false)
+            // With a time limit (see withTimeout in ThumbnailCapture.swift):
+            // if macOS never answers, this ends as nil after a few seconds
+            // instead of leaving the switcher "loading" forever.
+            async let contentTask: SCShareableContent? = withTimeout(seconds: screenshotServiceTimeout, label: "ScreenCaptureKit window list") {
+                try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false)
+            } ?? nil
             async let workspaceNameTask = Task.detached { getCurrentWorkspaceName() }.value
             // Needed for orphanedRunningApps below — has to be the FULL
             // cross-workspace list, not just this workspace's, since "zero
@@ -212,6 +225,9 @@ class SwitcherWindowController: NSObject {
             let windows = mru?.sorted(rawWindows, workspace: workspaceName) ?? rawWindows
 
             let content = await contentTask
+            if content == nil {
+                logWarn("Switcher: ScreenCaptureKit gave no window list (Screen Recording problem?), so no thumbnails")
+            }
             let loaded = await captureAll(windows, content: content)
             let configuredLauncherItems = missingLauncherApps(workspace: workspaceName, runningItems: loaded)
             let allWindows = await allWindowsTask
@@ -235,7 +251,12 @@ class SwitcherWindowController: NSObject {
 
             // Truly nothing to show at all — no real windows, no launcher
             // tiles either. Only now is there actually nothing to open for.
-            guard !loaded.isEmpty || !self.launcherItems.isEmpty else { sessionActive = false; return }
+            logInfo("Switcher: workspace \(workspaceName), AeroSpace windows \(rawWindows.count), thumbnails \(loaded.count), launcher tiles \(self.launcherItems.count), took \(Int(Date().timeIntervalSince(startedAt) * 1000)) ms")
+            guard !loaded.isEmpty || !self.launcherItems.isEmpty else {
+                logWarn("Switcher: nothing to show (no windows with thumbnails, no launcher tiles), not opening")
+                sessionActive = false
+                return
+            }
             self.items = loaded
 
             self.manualPageOverride = nil  // fresh session always starts on the page your selection is on
