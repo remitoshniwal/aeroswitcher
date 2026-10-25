@@ -9,7 +9,7 @@
 ID=$(aerospace list-windows --focused --format %{window-id})
 MARKER_DIR=/tmp/aerospace-restored
 MARKER="$MARKER_DIR/$ID"
-SCRIPT_DIR="/Users/remitoshniwal/Library/Application Support/AeroSpace"
+SCRIPT_DIR="$HOME/Library/Application Support/AeroSpace"
 
 mkdir -p "$MARKER_DIR"
 

@@ -63,7 +63,7 @@ Restart AeroSpace after this (quit it fully and reopen, or `killall AeroSpace &&
 The fullscreen/maximize toggle (`alt-f` in the config) depends on three small script files living in a specific folder:
 
 ```
-mkdir -p "~/Library/Application Support/AeroSpace"
+mkdir -p "$HOME/Library/Application Support/AeroSpace"
 ```
 
 Then put these three files in it, exactly as named:
@@ -75,10 +75,10 @@ Then put these three files in it, exactly as named:
 If you're copying these from elsewhere, make sure `toggle-maximize.sh` is executable:
 
 ```
-chmod +x "~/Library/Application Support/AeroSpace/toggle-maximize.sh"
+chmod +x "$HOME/Library/Application Support/AeroSpace/toggle-maximize.sh"
 ```
 
-**Important**: `.aerospace.toml` has this exact path (`/Users/yourname/Library/Application Support/AeroSpace`) hardcoded into it in several places, since AeroSpace's config format doesn't support `~` expansion inside quoted command strings. If your Mac username is different from what the config currently says, or you put this folder somewhere else, you'll need to find-and-replace the path throughout `.aerospace.toml` to match, otherwise the scripts silently won't be found. `grep "Application Support/AeroSpace" ~/.aerospace.toml` shows you every line that needs to match.
+**Important**: `.aerospace.toml` finds this folder through `$HOME` (`"$HOME/Library/Application Support/AeroSpace"`) in several places. AeroSpace runs those commands with bash, which fills in your own home folder, so the file works under any user name. A plain `~` would not work there, because bash doesn't expand it inside quotes. The folder name has to stay exactly `AeroSpace`, under `Library/Application Support` in your home folder. If you put the scripts somewhere else, change the path in every place the file mentions it, otherwise the scripts silently won't be found. `grep "Application Support/AeroSpace" ~/.aerospace.toml` shows you every line.
 
 ## 5. Build AeroSwitcher
 
@@ -217,7 +217,7 @@ The `aerospace/` folder in this repo holds copies of `~/.aerospace.toml` and the
 ./sync-aerospace.sh
 ```
 
-It only copies from your Mac into the repo, never the other way, so it can't break your running setup. It prints which files changed, and `git diff aerospace/` shows the exact lines. Commit them if they look right. If a live file is missing it skips that file instead of blanking out the repo copy, and it warns if your home folder isn't the `/Users/remitoshniwal` path the files have written into them.
+It only copies from your Mac into the repo, never the other way, so it can't break your running setup. It prints which files changed, and `git diff aerospace/` shows the exact lines. Commit them if they look right. If a live file is missing it skips that file instead of blanking out the repo copy, and while copying it writes `$HOME` in place of your home folder path, so the copies in the repo never contain your user name.
 
 At the end it also runs a **drift check** (`check-drift.js`), which compares `~/.aerospace.toml` with AeroSwitcher's `config.json` and lists apps that are set up in one but not the other, or in a different workspace in each. It only prints, it never changes either file. Some differences are on purpose (Finder is a launcher tile everywhere but has no AeroSpace rule), so put those in the `EXCEPTIONS` list at the top of `check-drift.js` and they stop being reported. You can also run it on its own:
 

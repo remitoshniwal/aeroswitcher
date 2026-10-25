@@ -76,36 +76,42 @@ gaps.outer.right =      8
 #   2. maximize.applescript — resizes the now-floating window to fill
 #      the screen. A real macOS window resize, nothing AeroSpace-specific,
 #      see ~/Library/Application Support/AeroSpace/maximize.applescript.
+#
+#   About "$HOME" in the commands below: AeroSpace runs every exec-and-forget
+#   command through /bin/bash, and bash fills in $HOME with your own home
+#   folder, so this file works under any user name. A plain "~" does NOT
+#   work there, bash only expands it outside quotes. (This file used to have
+#   one user's full /Users/<name> path written in.)
 on-window-detected = [
     # Core: WhatsApp, Spotify, Obsidian, Calendar, Claude
-    { if = 'test %{app-bundle-path} ~= "Whatsapp.app"', run = ['move-node-to-workspace Core', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
-    { if = 'test %{app-bundle-path} ~= "Spotify.app"',  run = ['move-node-to-workspace Core', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
-    { if = 'test %{app-bundle-path} ~= "Obsidian.app"', run = ['move-node-to-workspace Core', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
-    { if = 'test %{app-bundle-path} ~= "Calendar.app"', run = ['move-node-to-workspace Core', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
-    { if = 'test %{app-bundle-path} ~= "Claude.app"',   run = ['move-node-to-workspace Core', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "Whatsapp.app"', run = ['move-node-to-workspace Core', 'layout floating', 'exec-and-forget osascript "$HOME/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "Spotify.app"',  run = ['move-node-to-workspace Core', 'layout floating', 'exec-and-forget osascript "$HOME/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "Obsidian.app"', run = ['move-node-to-workspace Core', 'layout floating', 'exec-and-forget osascript "$HOME/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "Calendar.app"', run = ['move-node-to-workspace Core', 'layout floating', 'exec-and-forget osascript "$HOME/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "Claude.app"',   run = ['move-node-to-workspace Core', 'layout floating', 'exec-and-forget osascript "$HOME/Library/Application Support/AeroSpace/maximize.applescript"'] },
 
     # School: Chrome, Word, Powerpoint
-    { if = 'test %{app-bundle-path} ~= "Google Chrome.app"',  run = ['move-node-to-workspace School', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
-    { if = 'test %{app-bundle-path} ~= "Microsoft Word.app"', run = ['move-node-to-workspace School', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
-    { if = 'test %{app-bundle-path} ~= "Microsoft PowerPoint.app"', run = ['move-node-to-workspace School', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "Google Chrome.app"',  run = ['move-node-to-workspace School', 'layout floating', 'exec-and-forget osascript "$HOME/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "Microsoft Word.app"', run = ['move-node-to-workspace School', 'layout floating', 'exec-and-forget osascript "$HOME/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "Microsoft PowerPoint.app"', run = ['move-node-to-workspace School', 'layout floating', 'exec-and-forget osascript "$HOME/Library/Application Support/AeroSpace/maximize.applescript"'] },
 
     # Personal: Brave
-    { if = 'test %{app-bundle-path} ~= "Brave Browser.app"', run = ['move-node-to-workspace Personal', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "Brave Browser.app"', run = ['move-node-to-workspace Personal', 'layout floating', 'exec-and-forget osascript "$HOME/Library/Application Support/AeroSpace/maximize.applescript"'] },
 
     # Creative: Ableton Live, Affinity
-    { if = 'test %{app-bundle-path} ~= "Ableton Live"', run = ['move-node-to-workspace Creative', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
-    { if = 'test %{app-bundle-path} ~= "Affinity"',     run = ['move-node-to-workspace Creative', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "Ableton Live"', run = ['move-node-to-workspace Creative', 'layout floating', 'exec-and-forget osascript "$HOME/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "Affinity"',     run = ['move-node-to-workspace Creative', 'layout floating', 'exec-and-forget osascript "$HOME/Library/Application Support/AeroSpace/maximize.applescript"'] },
 
     # Dev: VS Code, Terminal
-    { if = 'test %{app-bundle-path} ~= "Visual Studio Code.app"', run = ['move-node-to-workspace Dev', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
-    { if = 'test %{app-bundle-path} ~= "Terminal.app"',           run = ['move-node-to-workspace Dev', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
-    { if = 'test %{app-bundle-path} ~= "GitHub Desktop.app"',     run = ['move-node-to-workspace Dev', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "Visual Studio Code.app"', run = ['move-node-to-workspace Dev', 'layout floating', 'exec-and-forget osascript "$HOME/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "Terminal.app"',           run = ['move-node-to-workspace Dev', 'layout floating', 'exec-and-forget osascript "$HOME/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "GitHub Desktop.app"',     run = ['move-node-to-workspace Dev', 'layout floating', 'exec-and-forget osascript "$HOME/Library/Application Support/AeroSpace/maximize.applescript"'] },
 
     # Gaming: Minecraft, Steam, Roblox, Prism Launcher
-    { if = 'test %{app-bundle-path} ~= "Minecraft"', run = ['move-node-to-workspace Gaming', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
-    { if = 'test %{app-bundle-path} ~= "Prism Launcher"', run = ['move-node-to-workspace Gaming', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
-    { if = 'test %{app-bundle-path} ~= "Steam.app"', run = ['move-node-to-workspace Gaming', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
-    { if = 'test %{app-bundle-path} ~= "Roblox"',    run = ['move-node-to-workspace Gaming', 'layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "Minecraft"', run = ['move-node-to-workspace Gaming', 'layout floating', 'exec-and-forget osascript "$HOME/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "Prism Launcher"', run = ['move-node-to-workspace Gaming', 'layout floating', 'exec-and-forget osascript "$HOME/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "Steam.app"', run = ['move-node-to-workspace Gaming', 'layout floating', 'exec-and-forget osascript "$HOME/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "Roblox"',    run = ['move-node-to-workspace Gaming', 'layout floating', 'exec-and-forget osascript "$HOME/Library/Application Support/AeroSpace/maximize.applescript"'] },
 
     # Everything else (Finder, anything not listed above) — no workspace
     # move, just floated and maximized wherever it opened. if = 'true'
@@ -114,7 +120,7 @@ on-window-detected = [
     # further rules once one matches, and every app above is matched by
     # exactly one specific rule, never two, so this only actually runs
     # for windows none of those already caught.
-    { if = 'true', run = ['layout floating', 'exec-and-forget osascript "/Users/remitoshniwal/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'true', run = ['layout floating', 'exec-and-forget osascript "$HOME/Library/Application Support/AeroSpace/maximize.applescript"'] },
 ]
 
 [mode.main.binding]
@@ -177,7 +183,7 @@ on-window-detected = [
     # macOS window resize on a FLOATING window (see on-window-detected,
     # above) — AeroSpace ignores floating windows' size entirely, so
     # there's nothing to react to, ever, on any kind of switch.
-    alt-f = 'exec-and-forget bash "/Users/remitoshniwal/Library/Application Support/AeroSpace/toggle-maximize.sh"'
+    alt-f = 'exec-and-forget bash "$HOME/Library/Application Support/AeroSpace/toggle-maximize.sh"'
 
     # Not used — service mode (below) was for layout/window-management
     # actions you said you don't use either.

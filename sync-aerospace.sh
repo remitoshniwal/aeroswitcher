@@ -28,23 +28,23 @@ LIVE_TOML="$HOME/.aerospace.toml"
 LIVE_SCRIPTS="$HOME/Library/Application Support/AeroSpace"
 SCRIPTS="maximize.applescript restore.applescript toggle-maximize.sh"
 
-# .aerospace.toml and toggle-maximize.sh spell out /Users/remitoshniwal
-# in full (AeroSpace commands don't understand ~). On a Mac with any other
-# username those paths point nowhere, so say so loudly instead of quietly
-# syncing a config that wouldn't work there.
-if [ "$HOME" != "/Users/remitoshniwal" ]; then
-    echo "WARNING: your home folder is $HOME, but the AeroSpace files have"
-    echo "/Users/remitoshniwal written into them. They won't work on this Mac"
-    echo "until those paths are changed. See step 4 of the install guide."
-    echo
-fi
+# The files in aerospace/ must not contain YOUR user name, so that anyone can
+# use them. The commands inside them find the scripts folder through $HOME
+# (AeroSpace runs them with bash, which fills in the home folder). Your live
+# files may still have your full path written out, for example
+# /Users/yourname/Library/..., so copy_in swaps that for $HOME while it
+# copies. If your live files already use $HOME, nothing changes.
 
 # Copy one file into aerospace/, but skip it (with a message) if the live
 # file doesn't exist. Skipping matters: copying "nothing" over the repo
 # copy would look like you deleted it.
+# The sed line writes the literal text $HOME in place of your home folder
+# path (the single quotes keep the shell from filling it in here, and the
+# # is the separator because paths contain slashes). Only the live files
+# are read, they are never changed.
 copy_in() {
     if [ -f "$1" ]; then
-        cp "$1" "aerospace/$2"
+        sed 's#'"$HOME"'/Library/Application Support/AeroSpace#$HOME/Library/Application Support/AeroSpace#g' "$1" > "aerospace/$2"
         echo "copied  $1"
     else
         echo "SKIPPED $1 (not found, repo copy left as it was)"

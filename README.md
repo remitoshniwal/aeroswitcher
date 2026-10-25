@@ -124,7 +124,7 @@ Changes from the settings window apply at once, and hand edits as soon as you sa
 
 The `aerospace/` folder holds the AeroSpace config and three small scripts this project is used with. Together they make every new window fill the screen, and **Alt+F** toggles a window between full screen and a smaller centered size. None of this is needed for AeroSwitcher itself.
 
-If you want to use it, note that the config and `toggle-maximize.sh` contain the full path `/Users/remitoshniwal/...`, because AeroSpace commands don't understand `~`. Replace that with your own home folder path. The [installation guide](docs/AeroSwitcher_Installation_Guide.md) covers where each file goes.
+The commands in the config find the scripts through `$HOME`, which AeroSpace's shell fills in with your own home folder, so the files work under any user name and need no editing. (A plain `~` would not work there.) The [installation guide](docs/AeroSwitcher_Installation_Guide.md) covers where each file goes.
 
 ## Known limitations
 
