@@ -118,7 +118,7 @@ Changes from the settings window apply at once, and hand edits as soon as you sa
 - **The panel opens but the cards are blank:** Screen Recording is missing. Same window. Screen Recording sometimes only works after AeroSwitcher is restarted, and Setup has a button for that.
 - **Cmd+Tab does nothing at all and the log says "did not answer":** macOS's screenshot service is stuck, not AeroSwitcher. It can happen after another user was logged in on the Mac. Log out any other accounts (a deleted account can leave a session running), and if that doesn't help, restart the Mac. The log is at `~/Library/Logs/AeroSwitcher/AeroSwitcher.log`.
 - **Permissions are asked for again after a rebuild:** `build.sh` printed a note that it signed ad hoc, because the `AeroSwitcherCodeSign` certificate from step 3 is missing or was made with another name.
-- **A grey tile doesn't open its app:** the tile's **Open name** in **Settings > Launcher tiles** has to be the app's name as macOS knows it. The alert that appears says what macOS answered.
+- **A grey tile doesn't open its app:** the tile's **Open name** in **Settings > Launcher tiles** has to be the app's name as macOS knows it. The alert that appears says what macOS answered. If the tile seems to do nothing and no alert appears (Roblox Studio does this), use the full path instead, for example `/Applications/RobloxStudio.app`: a same-named helper app inside it was being started instead.
 - **Anything else:** the log has the details. **Settings > General > Show log**, or `~/Library/Logs/AeroSwitcher/AeroSwitcher.log`. When you report a problem, paste the first lines of it too, they say which version you run.
 
 ## Optional: the full-screen window setup
