@@ -102,10 +102,11 @@ on-window-detected = [
     { if = 'test %{app-bundle-path} ~= "Ableton Live"', run = ['move-node-to-workspace Creative', 'layout floating', 'exec-and-forget osascript "$HOME/Library/Application Support/AeroSpace/maximize.applescript"'] },
     { if = 'test %{app-bundle-path} ~= "Affinity"',     run = ['move-node-to-workspace Creative', 'layout floating', 'exec-and-forget osascript "$HOME/Library/Application Support/AeroSpace/maximize.applescript"'] },
 
-    # Dev: VS Code, Terminal
+    # Dev: VS Code, Terminal, GitHub Desktop, Roblox Studio (keep Roblox Studio above the Gaming "Roblox" rule, which would match it too)
     { if = 'test %{app-bundle-path} ~= "Visual Studio Code.app"', run = ['move-node-to-workspace Dev', 'layout floating', 'exec-and-forget osascript "$HOME/Library/Application Support/AeroSpace/maximize.applescript"'] },
     { if = 'test %{app-bundle-path} ~= "Terminal.app"',           run = ['move-node-to-workspace Dev', 'layout floating', 'exec-and-forget osascript "$HOME/Library/Application Support/AeroSpace/maximize.applescript"'] },
     { if = 'test %{app-bundle-path} ~= "GitHub Desktop.app"',     run = ['move-node-to-workspace Dev', 'layout floating', 'exec-and-forget osascript "$HOME/Library/Application Support/AeroSpace/maximize.applescript"'] },
+    { if = 'test %{app-bundle-path} ~= "RobloxStudio.app"',       run = ['move-node-to-workspace Dev', 'layout floating', 'exec-and-forget osascript "$HOME/Library/Application Support/AeroSpace/maximize.applescript"'] },
 
     # Gaming: Minecraft, Steam, Roblox, Prism Launcher
     { if = 'test %{app-bundle-path} ~= "Minecraft"', run = ['move-node-to-workspace Gaming', 'layout floating', 'exec-and-forget osascript "$HOME/Library/Application Support/AeroSpace/maximize.applescript"'] },
