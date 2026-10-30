@@ -429,7 +429,7 @@ The icon shows in the About panel, in System Settings (Login Items, and the Inpu
 
 Three numbers, shown in the About panel and printed on the first line when the app starts (`AeroSwitcher 0.9.0 (build 57, a1b2c3d)`):
 
-- **Version** (`0.9.0`): the only one typed by hand, as `CFBundleShortVersionString` in `Info.plist`. Raise the middle number when a phase ships and the last one for fixes. 1.0.0 is for when strangers can install it (Phase 12).
+- **Version** (`0.9.0`): the only one typed by hand, as `CFBundleShortVersionString` in `Info.plist`. Raise the middle number when a phase ships and the last one for fixes. 1.0.0 is for when the app is fully ready, which the owner decides.
 - **Build** (`57`): the number of git commits so far (`git rev-list --count HEAD`). `build.sh` writes it into the copy of `Info.plist` inside the app (`CFBundleVersion`), so the file in the repo never changes because of a build. The build is made before its own commit, so a build made from a change shows the count from before that commit.
 - **Commit** (`a1b2c3d`): the short git hash, with `-dirty` added when there were uncommitted changes, so a test build can be told apart from a committed one (`AeroSwitcherCommit` in the bundle's `Info.plist`).
 
