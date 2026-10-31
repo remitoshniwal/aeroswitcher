@@ -1105,10 +1105,21 @@ func launchApp(_ app: LauncherApp) {
         if let script = app.newWindowScript {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
             process.arguments = script.flatMap { ["-e", $0] }
+            logInfo("launchApp: tile \"\(app.displayName)\" runs its new-window AppleScript")
         } else {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
             process.arguments = ["-a", app.openName]
+            // Which app macOS finds for this name. A launch that "worked" but
+            // did nothing (Roblox Studio's tile started a hidden helper app
+            // inside Studio and quit again) shows up here as a path inside
+            // another .app, or as "no app found". The same deprecated lookup
+            // as resolvedAppIcon, kept for the same reason: no other call
+            // turns a plain name into an app. Only the app's file path is
+            // logged, never a window title.
+            let resolved = NSWorkspace.shared.fullPath(forApplication: app.openName) ?? "no app found by that name"
+            logInfo("launchApp: tile \"\(app.displayName)\" runs open -a \"\(app.openName)\", macOS resolves that to \(resolved)")
         }
+        let startedAt = Date()
         do {
             try process.run()
             // AppleScript errors (a bad property name, a typo, etc.) and a
@@ -1119,6 +1130,9 @@ func launchApp(_ app: LauncherApp) {
             // message is this check.
             let errText = shortErrorText(String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "")
             process.waitUntilExit()
+            // Exit 0 only means the command was accepted. It says nothing about
+            // whether a window then appeared.
+            logInfo("launchApp: tile \"\(app.displayName)\" command finished, exit \(process.terminationStatus), \(Int(Date().timeIntervalSince(startedAt) * 1000)) ms")
             guard process.terminationStatus != 0 else { return }
             logError("launchApp: \(app.newWindowScript == nil ? "open -a \(app.openName)" : "AppleScript for \(app.displayName)") failed (exit \(process.terminationStatus)): \(errText)")
             await MainActor.run {

@@ -107,7 +107,11 @@ func captureThumbnail(scWindow: SCWindow) async -> NSImage? {
         let cgImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
         return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
     } catch {
-        logWarn("Capture failed: \(error)")
+        // Names the app (never the window title) so a failure can be tied to
+        // an app, for example a DRM protected one. Look for "Capture failed for".
+        let appName = scWindow.owningApplication?.applicationName ?? "unknown app"
+        let bundleID = scWindow.owningApplication?.bundleIdentifier ?? "unknown"
+        logWarn("Capture failed for \(appName) (\(bundleID)), window \(scWindow.windowID): \(error)")
         return nil
     }
 }
