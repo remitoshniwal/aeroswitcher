@@ -85,33 +85,46 @@ func withTimeout<T>(seconds: Double, label: String, _ operation: @escaping @Send
 
 @available(macOS 14.0, *)
 func captureThumbnail(scWindow: SCWindow) async -> NSImage? {
+    let filter = SCContentFilter(desktopIndependentWindow: scWindow)
+    let config = SCStreamConfiguration()
+
+    // Fit the window's real aspect ratio inside captureTargetSize so
+    // nothing gets stretched.
+    let srcW = max(scWindow.frame.width, 1)
+    let srcH = max(scWindow.frame.height, 1)
+    let aspect = srcW / srcH
+    var outW = captureTargetSize.width
+    var outH = captureTargetSize.width / aspect
+    if outH > captureTargetSize.height {
+        outH = captureTargetSize.height
+        outW = captureTargetSize.height * aspect
+    }
+    config.width = max(1, Int(outW))
+    config.height = max(1, Int(outH))
+    config.showsCursor = false
+
+    // Names the app (never the window title) so a failure can be tied to
+    // an app, for example a DRM protected one. Look for "Capture failed for".
+    let appName = scWindow.owningApplication?.applicationName ?? "unknown app"
+    let bundleID = scWindow.owningApplication?.bundleIdentifier ?? "unknown"
+
     do {
-        let filter = SCContentFilter(desktopIndependentWindow: scWindow)
-        let config = SCStreamConfiguration()
-
-        // Fit the window's real aspect ratio inside captureTargetSize so
-        // nothing gets stretched.
-        let srcW = max(scWindow.frame.width, 1)
-        let srcH = max(scWindow.frame.height, 1)
-        let aspect = srcW / srcH
-        var outW = captureTargetSize.width
-        var outH = captureTargetSize.width / aspect
-        if outH > captureTargetSize.height {
-            outH = captureTargetSize.height
-            outW = captureTargetSize.height * aspect
-        }
-        config.width = max(1, Int(outW))
-        config.height = max(1, Int(outH))
-        config.showsCursor = false
-
         let cgImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
         return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
     } catch {
-        // Names the app (never the window title) so a failure can be tied to
-        // an app, for example a DRM protected one. Look for "Capture failed for".
-        let appName = scWindow.owningApplication?.applicationName ?? "unknown app"
-        let bundleID = scWindow.owningApplication?.bundleIdentifier ?? "unknown"
-        logWarn("Capture failed for \(appName) (\(bundleID)), window \(scWindow.windowID): \(error)")
+        // Which app macOS had in front, and macOS's own "on screen" and
+        // "active" flags for this window, to show WHEN a capture fails. The
+        // panel is not shown yet at this point, so the front app is still the
+        // one you were using. Seen 2026-11-01: Ableton Live's window was
+        // "on screen false" whenever another app was in front, so every
+        // capture failed with -3811, and a second try 150 ms later failed
+        // every time too (tried and removed). Most likely because the owner
+        // keeps Ableton on a separate macOS desktop (reached with a 3 finger
+        // swipe), and macOS has nothing to capture for a window on a desktop
+        // you are not looking at. Covered windows on the same desktop, like
+        // Spotify behind Claude, stay "on screen" and capture fine.
+        let front = NSWorkspace.shared.frontmostApplication?.localizedName ?? "none"
+        logWarn("Capture failed for \(appName) (\(bundleID)), window \(scWindow.windowID), front app \(front), window on screen \(scWindow.isOnScreen), window active \(scWindow.isActive), showing its icon card: \(error)")
         return nil
     }
 }
