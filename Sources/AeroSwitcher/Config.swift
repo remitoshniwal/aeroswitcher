@@ -351,10 +351,27 @@ func resolveLauncherApps(from config: SwitcherConfig, report: ConfigReport) -> [
             let loadedIcon = entry.icon.flatMap {
                 loadCustomIcon(path: $0, context: "workspace \"\(workspace)\", app \"\(entry.name)\"", report: report)
             }
-            return LauncherApp(displayName: entry.name, matchKey: entry.match, openName: entry.open, newWindowScript: script, customIcon: loadedIcon)
+            return LauncherApp(displayName: entry.name, matchKey: entry.match, openName: entry.open, newWindowScript: script, customIcon: loadedIcon,
+                               bundleID: tileBundleID(openName: entry.open))
         }
     }
     return result
+}
+
+// The bundle id of the app a tile's Open text leads to: a full path is used
+// as it is, a plain name is looked up the same way `open -a` finds it (the
+// same deprecated lookup as resolvedAppIcon, for the same reason, see there).
+// Runs once per tile when config.json is (re)loaded, never on a Cmd+Tab. An
+// app installed AFTER that only gets its bundle id at the next reload; until
+// then the tile still matches it by name. nil = macOS found no app, which is
+// fine, the tile then matches by name only, exactly like before.
+func tileBundleID(openName: String) -> String? {
+    let path = openName.hasPrefix("/") ? openName : NSWorkspace.shared.fullPath(forApplication: openName)
+    let id = path.flatMap { Bundle(path: $0)?.bundleIdentifier }
+    if id == nil {
+        logDebug("Tile with Open \"\(openName)\": no app found, it matches by name only")
+    }
+    return id
 }
 
 // Everything the rest of the app needs from one successful read of
@@ -948,9 +965,13 @@ func resolvedAppIcon(matchKey: String, openName: String) -> NSImage? {
 // real, currently-open windows. Those are the ones that get a grayed tile.
 func missingLauncherApps(workspace: String?, runningItems: [ThumbnailItem]) -> [LauncherApp] {
     guard let workspace = workspace, let roster = workspaceLauncherApps[workspace] else { return [] }
+    // Each open window's bundle id, from its process, looked up once here
+    // rather than once per tile. AeroSpace's window list isn't asked for it,
+    // the process id it already gives is enough.
+    let windows = runningItems.map { ($0.appName, NSRunningApplication(processIdentifier: $0.appPID)?.bundleIdentifier) }
     return roster
         .filter { app in
-            !runningItems.contains { $0.appName.localizedCaseInsensitiveContains(app.matchKey) }
+            !windows.contains { app.matches(name: $0.0, bundleID: $0.1) }
         }
         // Alphabetical rather than whatever order they happen to be listed
         // in config.json — so the launcher row is always in the same,
@@ -1004,7 +1025,7 @@ struct HomelessApp {
 // on the entire Mac" that's the real dead end this exists to fix.
 func homelessRunningApps(allWindows: [AeroWindow], tracker: AppWorkspaceTracker) -> [HomelessApp] {
     let namesWithWindows = allWindows.map { $0.appName }
-    let configuredAnywhere = workspaceLauncherApps.values.flatMap { $0 }.map { $0.matchKey }
+    let configuredAnywhere = workspaceLauncherApps.values.flatMap { $0 }
     return NSWorkspace.shared.runningApplications
         // .regular excludes background helpers and menu-bar-only
         // utilities (which is also why AeroSwitcher itself, an .accessory
@@ -1013,7 +1034,12 @@ func homelessRunningApps(allWindows: [AeroWindow], tracker: AppWorkspaceTracker)
         .compactMap { app -> HomelessApp? in
             guard let name = app.localizedName else { return nil }
             guard !namesWithWindows.contains(where: { namesMatch($0, name) }) else { return nil }
-            guard !configuredAnywhere.contains(where: { namesMatch($0, name) }) else { return nil }
+            // A tile counts if the names match either way round (as before),
+            // or if the tile's app has this app's bundle id (Ableton's tile
+            // and the running app "Live").
+            guard !configuredAnywhere.contains(where: { tile in
+                namesMatch(tile.matchKey, name) || tile.matches(name: name, bundleID: app.bundleIdentifier)
+            }) else { return nil }
             // Bundle-on-disk icon, same reasoning as icon(forAppName:pid:)
             // and resolvedAppIcon — app.icon can return a generic
             // placeholder the first time it's asked about a process.
@@ -1143,10 +1169,12 @@ func loadKnownApps() -> KnownAppsTable {
 // outcomes when you click the tile, so it's worth showing which one it is.
 // A process that a known-app file says doesn't count (Roblox's hidden
 // background processes) is skipped, see KnownAppsTable.countsAsRunning.
+// A process belongs to the tile by name or by bundle id, see
+// LauncherApp.matches.
 func isAppRunning(_ app: LauncherApp) -> Bool {
     NSWorkspace.shared.runningApplications.contains { running in
         guard let name = running.localizedName,
-              name.localizedCaseInsensitiveContains(app.matchKey) else { return false }
+              app.matches(name: name, bundleID: running.bundleIdentifier) else { return false }
         return knownApps.countsAsRunning(running)
     }
 }

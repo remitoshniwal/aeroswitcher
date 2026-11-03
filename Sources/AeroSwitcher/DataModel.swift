@@ -59,15 +59,35 @@ struct LauncherApp: Identifiable {
     // for orphaned ones — those aren't in config.json at all, there's
     // nothing to load an icon from.
     let customIcon: NSImage?
+    // The bundle id of the app this tile opens (com.ableton.live for Ableton),
+    // worked out once when config.json is loaded (see tileBundleID). It lets
+    // a tile recognise its app even when macOS calls the app something else
+    // than the tile's match text: Ableton's tile matches "Ableton", but macOS
+    // and AeroSpace call the app "Live". nil if macOS found no app for the
+    // tile's Open text, and for orphaned tiles; those match by name only.
+    let bundleID: String?
     var id: String { displayName }
 
-    init(displayName: String, matchKey: String, openName: String, newWindowScript: [String]? = nil, isOrphaned: Bool = false, customIcon: NSImage? = nil) {
+    init(displayName: String, matchKey: String, openName: String, newWindowScript: [String]? = nil, isOrphaned: Bool = false, customIcon: NSImage? = nil, bundleID: String? = nil) {
         self.displayName = displayName
         self.matchKey = matchKey
         self.openName = openName
         self.newWindowScript = newWindowScript
         self.isOrphaned = isOrphaned
         self.customIcon = customIcon
+        self.bundleID = bundleID
+    }
+
+    // Whether a window or running app belongs to this tile. Two ways, either
+    // is enough: its name contains the tile's match text (the original rule,
+    // still the only one for tiles without a bundle id), or it has the same
+    // bundle id as the tile's app. The second one only ever ADDS matches, so
+    // nothing the name rule found before is lost. `name` is the window's or
+    // app's name, `otherBundleID` its process's bundle id (nil if unknown).
+    func matches(name: String, bundleID otherBundleID: String?) -> Bool {
+        if name.localizedCaseInsensitiveContains(matchKey) { return true }
+        guard let mine = bundleID, let other = otherBundleID else { return false }
+        return mine.caseInsensitiveCompare(other) == .orderedSame
     }
 }
 
