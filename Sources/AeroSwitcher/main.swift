@@ -75,6 +75,7 @@ _ = finderNewWindowScript
 _ = terminalNewWindowScript
 _ = defaultSwitcherConfig
 _ = settings  // reads config.json (launcher tiles, custom icons, keybinds), see SettingsStore
+_ = knownApps  // reads the KnownApps files inside the app (Config.swift)
 
 // MARK: - App entry
 

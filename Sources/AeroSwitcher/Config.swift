@@ -1052,15 +1052,102 @@ func homelessAppSummary(_ app: HomelessApp) -> WorkspaceAppSummary {
     WorkspaceAppSummary(appName: app.name, icon: customIcon(forAppName: app.name) ?? app.icon, windowCount: 0)
 }
 
+// MARK: Known apps (Phase 13)
+//
+// Some apps behave in ways the general rules get wrong, and each one is
+// described in its own small file in the KnownApps folder of the repo
+// (KnownApps/roblox.json, for example). build.sh copies that folder into
+// the app (Contents/Resources/KnownApps), so the files ship with every
+// release. Adding an app later = add one file there, rebuild, release, no
+// Swift change, as long as the file only uses the fields below. A new KIND
+// of fix still needs a new field here.
+//
+// Only facts that were really recorded on a Mac go into a file, and its
+// "note" says what was seen and when. JSON has no comments, so the note is
+// where the explanation lives.
+
+// One file. Fields that aren't in this list are ignored, so an older app
+// can still read a newer file.
+struct KnownApp: Decodable {
+    // Shown in the log only.
+    let name: String
+    // The app's own bundle id(s), exactly as macOS reports them.
+    let bundleIDs: [String]
+    // Bundle ids of helper processes that do NOT mean the app is open, for
+    // example a menu bar helper that keeps running after you quit it.
+    let ignoreWhenCheckingRunning: [String]?
+    // true = the app's own process only counts as open while it has a Dock
+    // icon. For apps that leave their main process running hidden.
+    let runningOnlyWithDockIcon: Bool?
+    // Why the app is listed, what was recorded, and when.
+    let note: String?
+}
+
+// All files, plus the two lookups the "is it running" check needs, built
+// once so a Cmd+Tab only does quick set lookups.
+struct KnownAppsTable {
+    let apps: [KnownApp]
+    let ignoredBundleIDs: Set<String>
+    let dockIconOnlyBundleIDs: Set<String>
+
+    init(_ apps: [KnownApp]) {
+        self.apps = apps
+        ignoredBundleIDs = Set(apps.flatMap { $0.ignoreWhenCheckingRunning ?? [] })
+        dockIconOnlyBundleIDs = Set(apps.filter { $0.runningOnlyWithDockIcon == true }.flatMap { $0.bundleIDs })
+    }
+
+    // false if a known-app file says this process doesn't count as "the app
+    // is open". Any process no file mentions counts, exactly as before.
+    func countsAsRunning(_ running: NSRunningApplication) -> Bool {
+        guard let id = running.bundleIdentifier else { return true }
+        if ignoredBundleIDs.contains(id) { return false }
+        if dockIconOnlyBundleIDs.contains(id) { return running.activationPolicy == .regular }
+        return true
+    }
+}
+
+// Read once at launch (listed in main.swift's "Start-up order" block).
+let knownApps = loadKnownApps()
+
+// Reads every .json file in the app's KnownApps folder, in name order. A file
+// that can't be read is skipped with a warning in the log, it never stops the
+// app. No folder at all (an app built without it, or `swift run`) means no
+// known apps, and everything behaves like before Phase 13.
+func loadKnownApps() -> KnownAppsTable {
+    guard let folder = Bundle.main.resourceURL?.appendingPathComponent("KnownApps"),
+          let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) else {
+        logWarn("Known apps: no KnownApps folder inside the app, using none")
+        return KnownAppsTable([])
+    }
+    var apps: [KnownApp] = []
+    for file in files.filter({ $0.pathExtension == "json" }).sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+        do {
+            let app = try JSONDecoder().decode(KnownApp.self, from: Data(contentsOf: file))
+            if app.bundleIDs.isEmpty {
+                logWarn("Known apps: \(file.lastPathComponent) lists no bundleIDs, skipped")
+                continue
+            }
+            apps.append(app)
+        } catch {
+            logWarn("Known apps: could not read \(file.lastPathComponent), skipped: \(error)")
+        }
+    }
+    logInfo("Known apps: \(apps.count) loaded (\(apps.map(\.name).joined(separator: ", ")))")
+    return KnownAppsTable(apps)
+}
+
 // Whether this app is running ANYWHERE on the Mac right now, not just in
 // the current workspace. A greyed-out tile can mean two different things:
 // the app is fully quit, or it's running fine with windows somewhere else
 // (another workspace, or none at all), and those lead to different
 // outcomes when you click the tile, so it's worth showing which one it is.
+// A process that a known-app file says doesn't count (Roblox's hidden
+// background processes) is skipped, see KnownAppsTable.countsAsRunning.
 func isAppRunning(_ app: LauncherApp) -> Bool {
     NSWorkspace.shared.runningApplications.contains { running in
-        guard let name = running.localizedName else { return false }
-        return name.localizedCaseInsensitiveContains(app.matchKey)
+        guard let name = running.localizedName,
+              name.localizedCaseInsensitiveContains(app.matchKey) else { return false }
+        return knownApps.countsAsRunning(running)
     }
 }
 

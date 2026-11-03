@@ -1,0 +1,7 @@
+{
+  "name": "Roblox",
+  "bundleIDs": ["com.roblox.RobloxPlayer"],
+  "ignoreWhenCheckingRunning": ["com.roblox.RobloxPlayer.MenuBar"],
+  "runningOnlyWithDockIcon": true,
+  "note": "Recorded 2026-11-01 and 2026-11-02 on macOS 26. Roblox leaves two background processes running with no window: RobloxMenuBar (a menu bar helper inside Roblox.app, never a Dock icon) and the Roblox player itself, which runs hidden without a Dock icon and only gets one while a game window is open. Without this file the Roblox launcher tile showed its 'running' dot while Roblox was closed."
+}

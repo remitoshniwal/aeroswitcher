@@ -64,6 +64,10 @@ cp Info.plist "$APP_BUNDLE/Contents/Info.plist"
 # if the file is missing, instead of quietly making an icon-less app.
 mkdir -p "$APP_BUNDLE/Contents/Resources"
 cp AppIcon.icns "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
+# The known-apps files (one small JSON file per app that needs special
+# handling, Phase 13). The app reads them at launch from this folder inside
+# itself. To add an app, put a new file in KnownApps/ and rebuild.
+cp -R KnownApps "$APP_BUNDLE/Contents/Resources/KnownApps"
 
 # Version numbers. The version people read ("0.9.0") is the one line you edit
 # by hand, CFBundleShortVersionString in Info.plist. The build number and the
