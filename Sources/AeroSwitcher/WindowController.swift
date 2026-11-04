@@ -109,6 +109,17 @@ class SwitcherWindowController: NSObject {
     // loading completes instead of leaving the panel open with nothing left
     // to close it.
     private var confirmPending = false
+    // When Cmd was let go while still loading (set in endSession). A quick
+    // tap (let go at once, loading done 0.1 to 0.3 s later) should still
+    // switch, like macOS's own Cmd+Tab. But when the Mac is busy, loading
+    // can take seconds (seen 2026-11-05 while Minecraft started: 2 to 13 s),
+    // and switching windows that long after you let go is a surprise: you
+    // have already moved on, and no panel was ever shown. So a release older
+    // than staleConfirmLimit when loading ends drops the Cmd+Tab instead.
+    // Raise the 1.0 to keep late switches for longer, lower it to drop them
+    // sooner.
+    private var cmdReleasedAt: Date?
+    private let staleConfirmLimit: Double = 1.0
     // Set right before show() when a fresh normal-switcher session starts
     // with Shift held (Cmd+Shift+Tab from cold) — tells show() to land the
     // initial selection on the LAST window (least-recently-used) instead
@@ -136,6 +147,15 @@ class SwitcherWindowController: NSObject {
             beginSession(startReversed: reverse)
             return
         }
+        // Cmd was let go while loading, and now Cmd+Tab is pressed again
+        // before loading finished: you're back in a Cmd+Tab, so show the
+        // panel when it's ready instead of switching (or dropping) the
+        // moment loading ends.
+        if confirmPending && !isOpen {
+            confirmPending = false
+            cmdReleasedAt = nil
+            logInfo("Switcher: Cmd+Tab pressed again while loading, the panel will open when ready")
+        }
         if showingAllWorkspaces {
             if reverse { overviewPageUp() } else { overviewPageDown() }
             return
@@ -147,6 +167,7 @@ class SwitcherWindowController: NSObject {
         guard !sessionActive else { moveNext(); return }  // shouldn't happen via handleTabPress, kept as a safe fallback
         sessionActive = true
         confirmPending = false
+        cmdReleasedAt = nil
         showingAllWorkspaces = false
         pendingStartReversed = startReversed
         show()
@@ -175,6 +196,7 @@ class SwitcherWindowController: NSObject {
             confirmSelection()
         } else {
             confirmPending = true
+            cmdReleasedAt = Date()
         }
     }
 
@@ -191,7 +213,10 @@ class SwitcherWindowController: NSObject {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         let old = items[index]
         items[index] = ThumbnailItem(id: old.id, appPID: old.appPID, appName: old.appName, image: image)
-        logDebug("Switcher: a late screenshot arrived and replaced its icon card")
+        // A normal log line (not debug) since 2026-11-05, so a late
+        // picture can be seen working in the everyday log. Rare: only a
+        // screenshot slower than screenshotWaitLimit that still succeeds.
+        logInfo("Switcher: a late screenshot arrived and replaced its icon card\(isOpen ? ", panel redrawn" : "")")
         if isOpen { refresh() }
     }
 
@@ -492,6 +517,14 @@ class SwitcherWindowController: NSObject {
             }
 
             if confirmPending {
+                // Cmd was let go long before loading finished (a busy Mac,
+                // see cmdReleasedAt): drop this Cmd+Tab rather than switch
+                // windows seconds later with no panel ever shown.
+                if let releasedAt = cmdReleasedAt, Date().timeIntervalSince(releasedAt) > staleConfirmLimit {
+                    logInfo("Switcher: Cmd was let go \(Int(Date().timeIntervalSince(releasedAt) * 1000)) ms before loading finished, dropped this Cmd+Tab instead of switching late")
+                    self.hide()
+                    return
+                }
                 // Cmd was already released while this was loading — jump
                 // straight to confirming the selected tile (focusing a
                 // window, or launching an app if it landed on the greyed
@@ -1272,6 +1305,7 @@ class SwitcherWindowController: NSObject {
         isVisible = false
         sessionActive = false
         confirmPending = false
+        cmdReleasedAt = nil
         // Closed with Cmd still held (confirmed with F, Escape, or a click):
         // the next Tab can come at once, without Cmd going down again.
         prefetchIfCmdHeld()
