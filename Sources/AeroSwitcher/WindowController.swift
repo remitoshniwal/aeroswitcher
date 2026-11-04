@@ -34,6 +34,15 @@ class SwitcherWindowController: NSObject {
     // so browsing and picking never fight each other.
     var manualPageOverride: Int? = nil
     var isLoading = false
+    // Late screenshots (see screenshotWaitLimit in ThumbnailCapture.swift):
+    // every Cmd+Tab gets a new number, so a picture that arrives late from
+    // an EARLIER Cmd+Tab is thrown away instead of landing on today's cards.
+    // itemsSession says which Cmd+Tab `items` belongs to. A picture can
+    // arrive before `items` is filled in (show() still waits for AeroSpace
+    // after the screenshots), so those wait in pendingLateImages.
+    private var sessionNumber = 0
+    private var itemsSession = -1
+    private var pendingLateImages: [String: NSImage] = [:]
     var mru: MRUTracker?
     // Self-contained (unlike mru, nothing outside the controller needs
     // it), so it's just created here directly rather than wired in from
@@ -165,6 +174,23 @@ class SwitcherWindowController: NSObject {
         }
     }
 
+    // A screenshot that missed screenshotWaitLimit arrived: put it on its
+    // card in place of the icon, and redraw if the panel is open. Ignored if
+    // it belongs to an earlier Cmd+Tab, or if its window isn't on a card.
+    private func applyLateImage(id: String, image: NSImage, session: Int) {
+        guard session == sessionNumber else { return }
+        guard itemsSession == session else {
+            // This Cmd+Tab's cards aren't made yet, keep it for show().
+            pendingLateImages[id] = image
+            return
+        }
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        let old = items[index]
+        items[index] = ThumbnailItem(id: old.id, appPID: old.appPID, appName: old.appName, image: image)
+        logDebug("Switcher: a late screenshot arrived and replaced its icon card")
+        if isOpen { refresh() }
+    }
+
     private func show() {
         guard !isLoading else {
             logWarn("Switcher: still loading from an earlier press, ignoring this one")
@@ -176,6 +202,10 @@ class SwitcherWindowController: NSObject {
             showOverview()
             return
         }
+
+        sessionNumber += 1
+        let session = sessionNumber
+        pendingLateImages = [:]
 
         Task { @MainActor in
             defer { isLoading = false }
@@ -228,7 +258,14 @@ class SwitcherWindowController: NSObject {
             if content == nil {
                 logWarn("Switcher: ScreenCaptureKit gave no window list (Screen Recording problem?), so no thumbnails")
             }
-            let loaded = await captureAll(windows, content: content)
+            // Timings for the log line below, so a slow Cmd+Tab says WHICH
+            // part was slow: asking AeroSpace and macOS for the window lists,
+            // or the screenshots.
+            let listsMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+            let (loaded, lateCount) = await captureAll(windows, content: content) { [weak self] id, image in
+                self?.applyLateImage(id: id, image: image, session: session)
+            }
+            let screenshotsMs = Int(Date().timeIntervalSince(startedAt) * 1000) - listsMs
             let configuredLauncherItems = missingLauncherApps(workspace: workspaceName, runningItems: loaded)
             let allWindows = await allWindowsTask
             // Keep the tracker current with today's real cross-workspace
@@ -251,13 +288,20 @@ class SwitcherWindowController: NSObject {
 
             // Truly nothing to show at all — no real windows, no launcher
             // tiles either. Only now is there actually nothing to open for.
-            logInfo("Switcher: workspace \(workspaceName), AeroSpace windows \(rawWindows.count), thumbnails \(loaded.count), launcher tiles \(self.launcherItems.count), took \(Int(Date().timeIntervalSince(startedAt) * 1000)) ms")
+            logInfo("Switcher: workspace \(workspaceName), AeroSpace windows \(rawWindows.count), thumbnails \(loaded.count), launcher tiles \(self.launcherItems.count), took \(Int(Date().timeIntervalSince(startedAt) * 1000)) ms (window lists \(listsMs) ms, screenshots \(screenshotsMs) ms, \(lateCount) late)")
             guard !loaded.isEmpty || !self.launcherItems.isEmpty else {
                 logWarn("Switcher: nothing to show (no windows with thumbnails, no launcher tiles), not opening")
                 sessionActive = false
                 return
             }
             self.items = loaded
+            self.itemsSession = session
+            // Pictures that came in late while this was still waiting for
+            // AeroSpace above.
+            for (id, image) in self.pendingLateImages {
+                self.applyLateImage(id: id, image: image, session: session)
+            }
+            self.pendingLateImages = [:]
 
             self.manualPageOverride = nil  // fresh session always starts on the page your selection is on
 

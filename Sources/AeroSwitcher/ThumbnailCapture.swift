@@ -83,6 +83,94 @@ func withTimeout<T>(seconds: Double, label: String, _ operation: @escaping @Send
     }
 }
 
+// MARK: Not waiting for slow screenshots
+//
+// How long Cmd+Tab waits for the screenshots before it opens the panel
+// anyway, in seconds, counted from when the screenshots start. Any window
+// still not captured by then gets its icon card at first, and its picture
+// replaces the icon the moment it arrives (see captureAll below).
+//
+// Why: the panel used to wait for the SLOWEST screenshot. Measured
+// 2026-11-04: a normal screenshot takes 40 to 200 ms, but a window in
+// macOS's own full screen on another desktop (the Minecraft game) took
+// 1.2 to 2.5 s just to FAIL, and Cmd+Tab took that long to open. A busy
+// Mac (a game running) also makes some normal screenshots slow.
+//
+// Lower = the panel opens faster, but more cards start as an icon and
+// "pop" into a picture a moment later. Higher = fewer pops, slower worst
+// case. The log line "Switcher: ..." says how many were late, use that to
+// tune it.
+let screenshotWaitLimit: Double = 0.25
+
+// Collects the screenshots as they finish, and lets captureAll wait for
+// either all of them or the wait limit, whichever comes first. The lock
+// makes it safe for many screenshots to finish at the same moment.
+private final class CaptureCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var images: [String: NSImage?] = [:]   // window id -> picture (nil = failed)
+    private var remaining: Int
+    private var waiting: CheckedContinuation<Void, Never>?
+    private var stoppedWaiting = false
+
+    init(count: Int) { remaining = count }
+
+    // Called once per window when its screenshot is done (or failed).
+    // Returns true if captureAll already stopped waiting, so the picture is
+    // LATE and has to be handed to the panel separately.
+    func finished(_ id: String, _ image: NSImage?) -> Bool {
+        lock.lock()
+        if stoppedWaiting { lock.unlock(); return true }
+        images[id] = image
+        remaining -= 1
+        let wake = remaining == 0 ? waiting : nil
+        if wake != nil { waiting = nil }
+        lock.unlock()
+        wake?.resume()
+        return false
+    }
+
+    // Waits for all screenshots or `seconds`, then returns what arrived and
+    // how many were still missing. Everything finishing after this is late.
+    func waitForAll(atMost seconds: Double) async -> (images: [String: NSImage?], late: Int) {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            guard park(continuation) else { continuation.resume(); return }
+            Task {
+                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                self.unpark()?.resume()
+            }
+        }
+        return stop()
+    }
+
+    // The three small steps below each hold the lock briefly. They are plain
+    // (not async) functions because Swift doesn't allow NSLock inside async
+    // code directly.
+
+    // Remembers who to wake. False if everything is already done.
+    private func park(_ continuation: CheckedContinuation<Void, Never>) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if remaining == 0 { return false }
+        waiting = continuation
+        return true
+    }
+
+    // The wait limit passed: hands back whoever is still waiting (nil if the
+    // last screenshot already woke them).
+    private func unpark() -> CheckedContinuation<Void, Never>? {
+        lock.lock(); defer { lock.unlock() }
+        let wake = waiting
+        waiting = nil
+        return wake
+    }
+
+    // Stops waiting for good and hands back what arrived in time.
+    private func stop() -> (images: [String: NSImage?], late: Int) {
+        lock.lock(); defer { lock.unlock() }
+        stoppedWaiting = true
+        return (images, remaining)
+    }
+}
+
 @available(macOS 14.0, *)
 func captureThumbnail(scWindow: SCWindow) async -> NSImage? {
     let filter = SCContentFilter(desktopIndependentWindow: scWindow)
@@ -154,23 +242,31 @@ func iconPlaceholder(forAppPID pid: Int32) -> NSImage {
 // a time. No cache — every card you see is a real screenshot from the
 // instant you pressed Cmd+Tab, nothing stale. What keeps this fast is
 // captureThumbnail's small capture resolution above plus doing every
-// window's capture in parallel here via withTaskGroup, not a cache trading
-// correctness for speed.
+// window's capture in parallel here, not a cache trading correctness for
+// speed.
 //
 // Windows that macOS lists but whose screenshot fails or times out get an
 // icon card (iconPlaceholder) rather than disappearing. A window macOS's
 // list doesn't contain at all is still left out, as before. If the whole
 // window list is unavailable (content == nil, for example macOS's screenshot
 // service is stuck), every window gets an icon card, so Cmd+Tab still opens.
+//
+// Waits at most screenshotWaitLimit for the screenshots (see above). A
+// window whose screenshot isn't back by then starts as an icon card, and
+// when its picture does arrive, `lateImage` is called with the window id and
+// the picture (on the main thread), so the panel can swap it in. A late
+// screenshot that fails is simply never reported, the icon card stays.
+// Also returns how many screenshots were late, for the log.
 @available(macOS 14.0, *)
-func captureAll(_ windows: [AeroWindow], content: SCShareableContent?) async -> [ThumbnailItem] {
+func captureAll(_ windows: [AeroWindow], content: SCShareableContent?,
+                lateImage: @escaping @MainActor (String, NSImage) -> Void) async -> (items: [ThumbnailItem], late: Int) {
     guard let content = content else {
         if !windows.isEmpty {
             logWarn("No screenshots available, showing app icons for \(windows.count) window(s)")
         }
-        return windows.map {
+        return (windows.map {
             ThumbnailItem(id: $0.id, appPID: $0.appPID, appName: $0.displayName, image: iconPlaceholder(forAppPID: $0.appPID))
-        }
+        }, 0)
     }
 
     var scByID: [CGWindowID: SCWindow] = [:]
@@ -178,34 +274,36 @@ func captureAll(_ windows: [AeroWindow], content: SCShareableContent?) async -> 
         scByID[w.windowID] = w
     }
 
-    // image == nil here means "macOS knows this window but the screenshot
-    // failed or timed out", windows macOS doesn't know are not in the result.
-    let captured: [(AeroWindow, NSImage?)] = await withTaskGroup(of: (AeroWindow, NSImage?)?.self) { group in
-        for w in windows {
-            group.addTask {
-                guard let cgID = CGWindowID(w.id), let scWindow = scByID[cgID] else { return nil }
-                // `?? nil`: withTimeout gives nil for "no answer", and the
-                // capture itself gives nil for "failed", both mean no screenshot.
-                let image = await withTimeout(seconds: screenshotServiceTimeout, label: "Screenshot of a window") {
-                    await captureThumbnail(scWindow: scWindow)
-                } ?? nil
-                return (w, image)
+    // Only windows macOS knows get a card at all, as before.
+    let known: [(AeroWindow, SCWindow)] = windows.compactMap { w in
+        guard let cgID = CGWindowID(w.id), let scWindow = scByID[cgID] else { return nil }
+        return (w, scWindow)
+    }
+
+    // Every screenshot runs in parallel as its own task. Not a Task group on
+    // purpose: a group can't finish before ALL its tasks do, and the whole
+    // point here is to stop waiting for the slow ones.
+    let collector = CaptureCollector(count: known.count)
+    for (w, scWindow) in known {
+        Task {
+            // `?? nil`: withTimeout gives nil for "no answer", and the
+            // capture itself gives nil for "failed", both mean no screenshot.
+            let image = await withTimeout(seconds: screenshotServiceTimeout, label: "Screenshot of a window") {
+                await captureThumbnail(scWindow: scWindow)
+            } ?? nil
+            if collector.finished(w.id, image), let image {
+                await lateImage(w.id, image)
             }
         }
-        var collected: [(AeroWindow, NSImage?)] = []
-        for await result in group {
-            if let result { collected.append(result) }
-        }
-        return collected
     }
+    let (images, late) = await collector.waitForAll(atMost: screenshotWaitLimit)
 
-    var resultByID: [String: ThumbnailItem] = [:]
-    for (w, img) in captured {
-        resultByID[w.id] = ThumbnailItem(id: w.id, appPID: w.appPID, appName: w.displayName,
-                                         image: img ?? iconPlaceholder(forAppPID: w.appPID))
+    // Original (already MRU-sorted) order. A missing entry (late) and a nil
+    // one (failed) both start as the app's icon.
+    let items = known.map { w, _ in
+        ThumbnailItem(id: w.id, appPID: w.appPID, appName: w.displayName,
+                      image: (images[w.id] ?? nil) ?? iconPlaceholder(forAppPID: w.appPID))
     }
-
-    // Original (already MRU-sorted) order.
-    return windows.compactMap { resultByID[$0.id] }
+    return (items, late)
 }
 
