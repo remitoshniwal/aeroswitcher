@@ -1129,6 +1129,15 @@ class SwitcherWindowController: NSObject {
         logInfo("Warm-up: panel drawn once in memory in \(Int(Date().timeIntervalSince(startedAt) * 1000)) ms")
 
         guard #available(macOS 14.0, *) else { return }
+        // Look-only check first: asking ScreenCaptureKit for anything
+        // without Screen Recording permission can make macOS show its
+        // "would like to record this screen" request at launch, and
+        // AeroSwitcher never asks for permissions by itself (the Setup
+        // window explains them instead, see SetupHelp.swift).
+        guard CGPreflightScreenCaptureAccess() else {
+            logInfo("Warm-up: no Screen Recording permission yet, screenshot warm-up skipped")
+            return
+        }
         Task.detached {
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             let t0 = Date()

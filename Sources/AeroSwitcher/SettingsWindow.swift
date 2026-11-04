@@ -72,6 +72,10 @@ final class SettingsModel: ObservableObject {
     private(set) var shownTree: [String: Any] = [:]
     private var keyMonitor: Any?
     private var appIconCache: [String: NSImage] = [:]
+    // helperAppInside answers by Open text, looked up once (it asks macOS),
+    // because SwiftUI redraws the rows often. Cleared when config.json is
+    // reloaded, so a newly installed app is seen then.
+    private var helperCache: [String: (helper: String, outerApp: String)?] = [:]
 
     init() {
         NotificationCenter.default.addObserver(forName: .configDidReload, object: nil, queue: .main) { [weak self] _ in
@@ -83,6 +87,7 @@ final class SettingsModel: ObservableObject {
     }
 
     func refresh() {
+        helperCache = [:]
         let snapshot = readConfigSnapshot()
         shownTree = snapshot.tree ?? [:]
         fileProblem = snapshot.problem
@@ -207,6 +212,15 @@ final class SettingsModel: ObservableObject {
             return image
         }
         return appIcon(match: tile.match, open: tile.open)
+    }
+
+    // The helper-app warning for one tile's Open text (see helperAppInside
+    // in Config.swift). nil = no warning.
+    func helperWarning(forOpen open: String) -> (helper: String, outerApp: String)? {
+        if let cached = helperCache[open] { return cached }
+        let answer = helperAppInside(openName: open)
+        helperCache[open] = answer
+        return answer
     }
 
     func appIcon(match: String, open: String) -> NSImage {
@@ -743,6 +757,14 @@ struct TileRow: View {
                 .accessibilityLabel(expanded ? "Hide details of \(tile.name)" : "Show details of \(tile.name)")
                 Image(nsImage: model.icon(forTile: tile)).resizable().frame(width: 24, height: 24)
                 Text(tile.name)
+                // Visible without opening the row: this tile's Open text
+                // leads to a helper app (details below).
+                if model.helperWarning(forOpen: tile.open) != nil {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .help("Open leads to a helper app inside another app, see the details")
+                        .accessibilityLabel("Warning: Open leads to a helper app")
+                }
                 Spacer()
                 Button {
                     model.removeTile(at: index, from: workspace)
@@ -774,6 +796,20 @@ struct TileRow: View {
             }
             Text("The name macOS opens the app by, usually its name in the Applications folder.")
                 .font(.caption).foregroundStyle(.secondary)
+            if let warning = model.helperWarning(forOpen: tile.open) {
+                // The Roblox Studio problem: see helperAppInside, Config.swift.
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("macOS opens a helper app hidden inside \((warning.outerApp as NSString).lastPathComponent) for this name, not the app itself. It may start and quit at once, so the tile seems to do nothing.",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Use \(warning.outerApp) instead") {
+                        model.setTileField("open", to: warning.outerApp, at: index, in: workspace)
+                    }
+                }
+                .frame(maxWidth: 420, alignment: .leading)
+            }
             Picker("New window", selection: Binding(
                 get: { tile.newWindowStyle?.lowercased() ?? "" },
                 set: { model.setTileField("newWindowStyle", to: $0.isEmpty ? nil : $0, at: index, in: workspace) })) {

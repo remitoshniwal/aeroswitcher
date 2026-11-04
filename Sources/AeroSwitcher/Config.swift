@@ -366,12 +366,40 @@ func resolveLauncherApps(from config: SwitcherConfig, report: ConfigReport) -> [
 // then the tile still matches it by name. nil = macOS found no app, which is
 // fine, the tile then matches by name only, exactly like before.
 func tileBundleID(openName: String) -> String? {
-    let path = openName.hasPrefix("/") ? openName : NSWorkspace.shared.fullPath(forApplication: openName)
-    let id = path.flatMap { Bundle(path: $0)?.bundleIdentifier }
+    let id = appPath(forOpenName: openName).flatMap { Bundle(path: $0)?.bundleIdentifier }
     if id == nil {
         logDebug("Tile with Open \"\(openName)\": no app found, it matches by name only")
     }
     return id
+}
+
+// Where a tile's Open text leads: a full path as it is, a plain name looked
+// up the way `open -a` finds it (the deprecated lookup, see resolvedAppIcon
+// for why). nil = macOS knows no app by that name.
+func appPath(forOpenName openName: String) -> String? {
+    openName.hasPrefix("/") ? openName : NSWorkspace.shared.fullPath(forApplication: openName)
+}
+
+// MARK: Helper apps hidden inside another app
+//
+// Some apps carry a second, smaller app inside their own bundle with the
+// SAME name, and `open -a <name>` can pick that one. Seen 2026-10-29 and
+// again 2026-11-04: "RobloxStudio" opened
+// /Applications/RobloxStudio.app/Contents/MacOS/RobloxStudio.app, a helper
+// that starts and quits within a second, so the tile looked like it did
+// nothing, with no error. The fix is the outer app's full path as the Open
+// text; Settings > Launcher tiles shows a warning with a button for it.
+//
+// Returns the path macOS picked and the outer app it sits inside, or nil
+// when the Open text leads to a normal app (or to nothing). How it tells: a
+// path with ".app/" in it before its last part is inside another app.
+func helperAppInside(openName: String) -> (helper: String, outerApp: String)? {
+    guard let path = appPath(forOpenName: openName) else { return nil }
+    let parts = (path as NSString).pathComponents
+    guard let first = parts.firstIndex(where: { $0.hasSuffix(".app") }),
+          first < parts.count - 1,
+          parts[(first + 1)...].contains(where: { $0.hasSuffix(".app") }) else { return nil }
+    return (path, NSString.path(withComponents: Array(parts[...first])))
 }
 
 // Everything the rest of the app needs from one successful read of
@@ -1333,6 +1361,9 @@ func launchApp(_ app: LauncherApp) {
             // logged, never a window title.
             let resolved = NSWorkspace.shared.fullPath(forApplication: app.openName) ?? "no app found by that name"
             logInfo("launchApp: tile \"\(app.displayName)\" runs open -a \"\(app.openName)\", macOS resolves that to \(resolved)")
+            if let helper = helperAppInside(openName: app.openName) {
+                logWarn("launchApp: that is a helper app inside \(helper.outerApp), which may quit at once. Put \(helper.outerApp) in the tile's Open field (Settings > Launcher tiles shows a button for it).")
+            }
         }
         let startedAt = Date()
         do {
