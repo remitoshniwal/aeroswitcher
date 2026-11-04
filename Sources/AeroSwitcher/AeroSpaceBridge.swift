@@ -100,7 +100,8 @@ func getWindows(scope: String) -> [AeroWindow] {
             .map(String.init)
         if parts.count >= 4 {
             let title = parts.count >= 5 ? parts[4] : ""
-            let window = AeroWindow(id: parts[0], appPID: Int32(parts[1]) ?? 0, workspace: parts[2], appName: parts[3], title: title)
+            let pid = Int32(parts[1]) ?? 0
+            let window = AeroWindow(id: parts[0], appPID: pid, workspace: parts[2], appName: shownAppName(pid: pid, reported: parts[3]), title: title)
             if window.appPID == ownPID { continue }
             windows.append(window)
         }
@@ -197,7 +198,18 @@ func getFocusedWindow() -> AeroWindow? {
     let parts = line.split(separator: "|", maxSplits: 4, omittingEmptySubsequences: false).map(String.init)
     guard parts.count >= 4 else { return nil }
     let title = parts.count >= 5 ? parts[4] : ""
-    return AeroWindow(id: parts[0], appPID: Int32(parts[1]) ?? 0, workspace: parts[2], appName: parts[3], title: title)
+    let pid = Int32(parts[1]) ?? 0
+    return AeroWindow(id: parts[0], appPID: pid, workspace: parts[2], appName: shownAppName(pid: pid, reported: parts[3]), title: title)
+}
+
+// The app name a window is shown under. Normally exactly what AeroSpace
+// reported. A window whose process a KnownApps file claims (Steam's "Steam
+// Helper", Minecraft's "java", see KnownApp.windowsFromBundleIDs and
+// windowsFromFolders in Config.swift) gets that app's name instead. Done
+// here, where the window list is read, so the Cmd+Tab card, the Cmd+`
+// overview and the grey tile hiding all see the same name.
+func shownAppName(pid: Int32, reported: String) -> String {
+    knownApps.owner(ofPID: pid)?.name ?? reported
 }
 
 // Groups every open window by workspace, then by app within each workspace,
@@ -227,7 +239,10 @@ func buildWorkspaceSummaries(allWorkspaceNames: [String], windows: [AeroWindow],
     func icon(forPID pid: Int32) -> NSImage? {
         if let cached = iconCache[pid] { return cached }
         let running = NSRunningApplication(processIdentifier: pid_t(pid))
-        let image = running?.bundleURL.map { NSWorkspace.shared.icon(forFile: $0.path) } ?? running?.icon
+        // A KnownApps app's icon first (Steam instead of the blank Steam
+        // Helper, Minecraft instead of java's program icon).
+        let image = knownApps.icon(forPID: pid)
+            ?? running?.bundleURL.map { NSWorkspace.shared.icon(forFile: $0.path) } ?? running?.icon
         iconCache[pid] = image
         return image
     }

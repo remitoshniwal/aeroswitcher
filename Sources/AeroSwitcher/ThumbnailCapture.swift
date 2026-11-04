@@ -135,7 +135,10 @@ func captureThumbnail(scWindow: SCWindow) async -> NSImage? {
 // failed or timed out on this window's screenshot, so the window stays
 // reachable with Cmd+Tab instead of silently vanishing from the list.
 func iconPlaceholder(forAppPID pid: Int32) -> NSImage {
-    let icon = NSRunningApplication(processIdentifier: pid)?.icon
+    // A KnownApps app's icon first (Minecraft's "java" gets Minecraft's icon,
+    // not the generic program icon), see KnownAppsTable.icon(forPID:).
+    let icon = knownApps.icon(forPID: pid)
+        ?? NSRunningApplication(processIdentifier: pid)?.icon
         ?? NSWorkspace.shared.icon(for: .applicationBundle)
     // A bit under half the card's height, so it reads as "the app" rather
     // than a huge blurry thumbnail. Change the 0.5 to make it bigger or smaller.

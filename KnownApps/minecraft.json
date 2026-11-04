@@ -1,0 +1,9 @@
+{
+  "name": "Minecraft",
+  "bundleIDs": ["com.mojang.minecraftlauncher"],
+  "windowsFromFolders": [
+    "~/Library/Application Support/minecraft/runtime/",
+    "~/Library/Application Support/PrismLauncher/java/"
+  ],
+  "note": "Recorded 2026-11-03 on macOS 26. The launcher (Minecraft.app) is a normal app, but the game window belongs to a program just called 'java' with no bundle id and no app icon. The official launcher runs its own copy of Java from ~/Library/Application Support/minecraft/runtime, Prism Launcher from ~/Library/Application Support/PrismLauncher/java. Without this file the game showed as 'java' with the generic program icon in Cmd+Tab and the overview."
+}

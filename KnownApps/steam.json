@@ -1,0 +1,6 @@
+{
+  "name": "Steam",
+  "bundleIDs": ["com.valvesoftware.steam"],
+  "windowsFromBundleIDs": ["com.valvesoftware.steam.helper"],
+  "note": "Recorded 2026-11-03 on macOS 26. /Applications/Steam.app only starts the real Steam, which runs from ~/Library/Application Support/Steam with the same bundle id and has no window. Steam's main window belongs to a hidden helper, 'Steam Helper' (com.valvesoftware.steam.helper), which has no icon, so without this file the window showed as 'Steam Helper' with a blank icon in Cmd+Tab and the overview."
+}

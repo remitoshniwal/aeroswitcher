@@ -1025,6 +1025,9 @@ struct HomelessApp {
 // on the entire Mac" that's the real dead end this exists to fix.
 func homelessRunningApps(allWindows: [AeroWindow], tracker: AppWorkspaceTracker) -> [HomelessApp] {
     let namesWithWindows = allWindows.map { $0.appName }
+    // Also by process: a window shown under a known app's name (Minecraft's
+    // "java" shows as "Minecraft") would otherwise make "java" look windowless.
+    let pidsWithWindows = Set(allWindows.map { $0.appPID })
     let configuredAnywhere = workspaceLauncherApps.values.flatMap { $0 }
     return NSWorkspace.shared.runningApplications
         // .regular excludes background helpers and menu-bar-only
@@ -1033,7 +1036,8 @@ func homelessRunningApps(allWindows: [AeroWindow], tracker: AppWorkspaceTracker)
         .filter { $0.activationPolicy == .regular }
         .compactMap { app -> HomelessApp? in
             guard let name = app.localizedName else { return nil }
-            guard !namesWithWindows.contains(where: { namesMatch($0, name) }) else { return nil }
+            guard !namesWithWindows.contains(where: { namesMatch($0, name) }),
+                  !pidsWithWindows.contains(app.processIdentifier) else { return nil }
             // A tile counts if the names match either way round (as before),
             // or if the tile's app has this app's bundle id (Ableton's tile
             // and the running app "Live").
@@ -1095,9 +1099,14 @@ func homelessAppSummary(_ app: HomelessApp) -> WorkspaceAppSummary {
 // One file. Fields that aren't in this list are ignored, so an older app
 // can still read a newer file.
 struct KnownApp: Decodable {
-    // Shown in the log only.
+    // The app's name. Shown in the log, and, for windows that belong to the
+    // app through the two "windowsFrom" fields below, also on the Cmd+Tab
+    // card and in the Cmd+` overview instead of the helper's own name. It
+    // should contain the text your tile matches ("Steam", "Minecraft"), so the
+    // grey tile hides while such a window is open.
     let name: String
-    // The app's own bundle id(s), exactly as macOS reports them.
+    // The app's own bundle id(s), exactly as macOS reports them. The first one
+    // is also where the icon for "windowsFrom" windows comes from.
     let bundleIDs: [String]
     // Bundle ids of helper processes that do NOT mean the app is open, for
     // example a menu bar helper that keeps running after you quit it.
@@ -1105,21 +1114,78 @@ struct KnownApp: Decodable {
     // true = the app's own process only counts as open while it has a Dock
     // icon. For apps that leave their main process running hidden.
     let runningOnlyWithDockIcon: Bool?
+    // Bundle ids of helper processes whose WINDOWS are really this app's
+    // windows. Steam's main window belongs to "Steam Helper"
+    // (com.valvesoftware.steam.helper), which has no icon of its own.
+    let windowsFromBundleIDs: [String]?
+    // Folders: a window whose program runs from inside one of them is this
+    // app's window. For programs with no bundle id at all, like the "java"
+    // that runs Minecraft. "~/" at the start means your home folder.
+    let windowsFromFolders: [String]?
     // Why the app is listed, what was recorded, and when.
     let note: String?
 }
 
-// All files, plus the two lookups the "is it running" check needs, built
-// once so a Cmd+Tab only does quick set lookups.
+// All files, plus the lookups the checks below need, built once so a Cmd+Tab
+// only does quick set lookups.
 struct KnownAppsTable {
     let apps: [KnownApp]
     let ignoredBundleIDs: Set<String>
     let dockIconOnlyBundleIDs: Set<String>
+    // helper bundle id -> the app its windows belong to
+    let ownerByHelperBundleID: [String: KnownApp]
+    // (folder path ending in "/", the app its programs belong to), "~/"
+    // already swapped for the real home folder
+    let ownerByFolder: [(String, KnownApp)]
 
     init(_ apps: [KnownApp]) {
         self.apps = apps
         ignoredBundleIDs = Set(apps.flatMap { $0.ignoreWhenCheckingRunning ?? [] })
         dockIconOnlyBundleIDs = Set(apps.filter { $0.runningOnlyWithDockIcon == true }.flatMap { $0.bundleIDs })
+        var byID: [String: KnownApp] = [:]
+        var byFolder: [(String, KnownApp)] = []
+        for app in apps {
+            for id in app.windowsFromBundleIDs ?? [] { byID[id] = app }
+            for folder in app.windowsFromFolders ?? [] {
+                var path = folder.hasPrefix("~/") ? NSHomeDirectory() + String(folder.dropFirst(1)) : folder
+                if !path.hasSuffix("/") { path += "/" }
+                byFolder.append((path, app))
+            }
+        }
+        ownerByHelperBundleID = byID
+        ownerByFolder = byFolder
+    }
+
+    // The known app this process's windows belong to, or nil for every
+    // process no "windowsFrom" field mentions (almost all of them; those keep
+    // their own name and icon). Checked by bundle id first, then by where its
+    // program file is (the .app if it has one, otherwise the program itself).
+    func owner(of running: NSRunningApplication) -> KnownApp? {
+        if let id = running.bundleIdentifier, let app = ownerByHelperBundleID[id] { return app }
+        guard !ownerByFolder.isEmpty else { return nil }
+        let paths = [running.bundleURL?.path, running.executableURL?.path].compactMap { $0 }
+        return ownerByFolder.first { folder, _ in paths.contains { $0.hasPrefix(folder) } }?.1
+    }
+
+    func owner(ofPID pid: Int32) -> KnownApp? {
+        guard pid != 0, let running = NSRunningApplication(processIdentifier: pid_t(pid)) else { return nil }
+        return owner(of: running)
+    }
+
+    // The icon to show for a "windowsFrom" window: the icon of the app with
+    // the entry's first bundle id (Steam's own icon, Minecraft's launcher
+    // icon). nil if macOS doesn't know that app, then the caller falls back
+    // to the process's own icon as before.
+    func icon(for app: KnownApp) -> NSImage? {
+        guard let id = app.bundleIDs.first,
+              let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) else { return nil }
+        return NSWorkspace.shared.icon(forFile: url.path)
+    }
+
+    // Shortcut for the icon lookups: the known app's icon if this process's
+    // windows belong to one, nil otherwise.
+    func icon(forPID pid: Int32) -> NSImage? {
+        owner(ofPID: pid).flatMap { icon(for: $0) }
     }
 
     // false if a known-app file says this process doesn't count as "the app
@@ -1171,10 +1237,28 @@ func loadKnownApps() -> KnownAppsTable {
 // background processes) is skipped, see KnownAppsTable.countsAsRunning.
 // A process belongs to the tile by name or by bundle id, see
 // LauncherApp.matches.
+//
+// Two Phase 13 additions:
+//   - A helper whose windows belong to a known app (Steam Helper, Minecraft's
+//     "java", see KnownApp.windowsFromBundleIDs/windowsFromFolders) is
+//     looked at under that app's name and bundle id, so it counts for the
+//     right tile.
+//   - When the tile's app and the running process BOTH have a bundle id and
+//     the two are different, the process is a different app and does not
+//     count, even if its name contains the tile's match text. Without this,
+//     Roblox Studio (com.Roblox.RobloxStudio) lit up the Roblox tile
+//     (com.roblox.RobloxPlayer), and macOS services named after an app, like
+//     "AutoFill (Google Chrome)" or "Claude Helper", could keep a tile's dot
+//     on after the app itself quit. Processes with no bundle id (java), and
+//     tiles whose app macOS couldn't find, still go by name only.
 func isAppRunning(_ app: LauncherApp) -> Bool {
     NSWorkspace.shared.runningApplications.contains { running in
-        guard let name = running.localizedName,
-              app.matches(name: name, bundleID: running.bundleIdentifier) else { return false }
+        let owner = knownApps.owner(of: running)
+        guard let name = owner?.name ?? running.localizedName else { return false }
+        let runningID = owner?.bundleIDs.first ?? running.bundleIdentifier
+        if let mine = app.bundleID, let theirs = runningID,
+           mine.caseInsensitiveCompare(theirs) != .orderedSame { return false }
+        guard app.matches(name: name, bundleID: runningID) else { return false }
         return knownApps.countsAsRunning(running)
     }
 }
