@@ -1263,6 +1263,17 @@ func isAppRunning(_ app: LauncherApp) -> Bool {
     }
 }
 
+// Each tile's Running/Quit state, worked out ONCE per Cmd+Tab (by tile id)
+// so the sort below and every redraw of the panel can reuse it instead of
+// asking isAppRunning again and again.
+func launcherRunningStates(_ apps: [LauncherApp]) -> [String: Bool] {
+    var states: [String: Bool] = [:]
+    for app in apps where states[app.id] == nil {
+        states[app.id] = isAppRunning(app)
+    }
+    return states
+}
+
 // Order for the greyed-out launcher row: three groups, not two. Orphaned
 // "No window" tiles (apps that showed up here uninvited, but are at least
 // genuinely running right now) come first, then actually-configured
@@ -1270,11 +1281,16 @@ func isAppRunning(_ app: LauncherApp) -> Bool {
 // somewhere else), then fully "Quit" tiles last — those are doing the
 // least right now, no window anywhere AND not even open. Alphabetical
 // within each of the three groups.
-func sortedLauncherItems(_ apps: [LauncherApp]) -> [LauncherApp] {
+//
+// `running` is launcherRunningStates(apps), worked out once by the caller:
+// isAppRunning looks through every running process (about 0.5 ms), and the
+// sort asks about each tile many times, so asking inside the sort cost up to
+// 15 ms per Cmd+Tab (measured 2026-11-04).
+func sortedLauncherItems(_ apps: [LauncherApp], running: [String: Bool]) -> [LauncherApp] {
     // Lower rank = earlier in the row.
     func rank(_ app: LauncherApp) -> Int {
-        if app.isOrphaned { return 0 }      // "No window"
-        return isAppRunning(app) ? 1 : 2    // "Running" then "Quit"
+        if app.isOrphaned { return 0 }                                // "No window"
+        return (running[app.id] ?? isAppRunning(app)) ? 1 : 2         // "Running" then "Quit"
     }
     return apps.sorted { a, b in
         let (rankA, rankB) = (rank(a), rank(b))

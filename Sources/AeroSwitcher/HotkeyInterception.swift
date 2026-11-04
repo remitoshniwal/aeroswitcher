@@ -16,6 +16,10 @@ class HotkeyManager {
     // changed keybind in config.json works the moment it's reloaded (see
     // SettingsStore in Config.swift). Cheap: it's already worked out.
     var keybinds: ResolvedKeybinds { settings.current.keybinds }
+    // Whether Cmd was down at the last modifier change, so the moment Cmd
+    // goes DOWN can be told apart from other modifier changes (Shift added
+    // while Cmd is held, for example). See the flagsChanged block below.
+    private var cmdWasDown = false
 
     init(controller: SwitcherWindowController) {
         self.controller = controller
@@ -205,7 +209,16 @@ class HotkeyManager {
         }
 
         if type == .flagsChanged {
-            if !event.flags.contains(.maskCommand) {
+            let cmdDown = event.flags.contains(.maskCommand)
+            // Cmd just went down: Cmd+Tab may be coming, so start fetching
+            // macOS's window list now (prefetchLists, WindowController.swift).
+            // Only starts background work and returns at once, this tap
+            // must never wait.
+            if cmdDown && !cmdWasDown {
+                controller.prefetchLists()
+            }
+            cmdWasDown = cmdDown
+            if !cmdDown {
                 controller.endSession()
             }
         }

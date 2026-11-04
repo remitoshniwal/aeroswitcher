@@ -251,6 +251,23 @@ func iconPlaceholder(forAppPID pid: Int32) -> NSImage {
 // window list is unavailable (content == nil, for example macOS's screenshot
 // service is stuck), every window gets an icon card, so Cmd+Tab still opens.
 //
+// One window's screenshot, started right away and running in the
+// background, with the usual time limit. `?? nil`: withTimeout gives nil
+// for "no answer", and the capture itself gives nil for "failed", both mean
+// no screenshot. show() (WindowController.swift) uses this to start some
+// screenshots BEFORE AeroSpace has answered, see guessedWindowIDs there.
+@available(macOS 14.0, *)
+func startCapture(_ scWindow: SCWindow) -> Task<NSImage?, Never> {
+    Task {
+        await withTimeout(seconds: screenshotServiceTimeout, label: "Screenshot of a window") {
+            await captureThumbnail(scWindow: scWindow)
+        } ?? nil
+    }
+}
+
+// `started`: screenshots already running for some window ids (started
+// before AeroSpace answered); those are reused instead of taken twice.
+//
 // Waits at most screenshotWaitLimit for the screenshots (see above). A
 // window whose screenshot isn't back by then starts as an icon card, and
 // when its picture does arrive, `lateImage` is called with the window id and
@@ -259,6 +276,7 @@ func iconPlaceholder(forAppPID pid: Int32) -> NSImage {
 // Also returns how many screenshots were late, for the log.
 @available(macOS 14.0, *)
 func captureAll(_ windows: [AeroWindow], content: SCShareableContent?,
+                started: [String: Task<NSImage?, Never>] = [:],
                 lateImage: @escaping @MainActor (String, NSImage) -> Void) async -> (items: [ThumbnailItem], late: Int) {
     guard let content = content else {
         if !windows.isEmpty {
@@ -285,12 +303,9 @@ func captureAll(_ windows: [AeroWindow], content: SCShareableContent?,
     // point here is to stop waiting for the slow ones.
     let collector = CaptureCollector(count: known.count)
     for (w, scWindow) in known {
+        let capture = started[w.id] ?? startCapture(scWindow)
         Task {
-            // `?? nil`: withTimeout gives nil for "no answer", and the
-            // capture itself gives nil for "failed", both mean no screenshot.
-            let image = await withTimeout(seconds: screenshotServiceTimeout, label: "Screenshot of a window") {
-                await captureThumbnail(scWindow: scWindow)
-            } ?? nil
+            let image = await capture.value
             if collector.finished(w.id, image), let image {
                 await lateImage(w.id, image)
             }

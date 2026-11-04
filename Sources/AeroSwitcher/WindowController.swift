@@ -21,6 +21,10 @@ class SwitcherWindowController: NSObject {
     var items: [ThumbnailItem] = []
     var selectedIndex = 0
     var launcherItems: [LauncherApp] = []
+    // Each tile's Running/Quit state for this Cmd+Tab, by tile id, worked
+    // out once in show() (launcherRunningStates, Config.swift) so redrawing
+    // the panel on every key press doesn't check every process again.
+    var launcherRunning: [String: Bool] = [:]
     // nil while Tab-cycling real windows normally. Set to an index into
     // launcherItems the moment you press the down arrow to "enter" the
     // grayed-out row. Cmd+Tab / arrow-cycling real windows always resets
@@ -191,6 +195,103 @@ class SwitcherWindowController: NSObject {
         if isOpen { refresh() }
     }
 
+    // MARK: Early start on Cmd press
+    //
+    // Measured 2026-11-04: before any screenshot, Cmd+Tab spent about 70 ms
+    // (up to 220 ms) just getting the window lists, mostly macOS's own list
+    // for screenshots (40 to 60 ms). People press Cmd a moment before Tab,
+    // so macOS's list is now asked for the moment Cmd goes DOWN, and Cmd+Tab
+    // picks up the answer instead of starting from zero.
+    //
+    // ONLY macOS's list, never AeroSpace's. Tried 2026-11-04 and removed:
+    // AeroSpace's window list fetched early too, right as a switch was
+    // finishing, sometimes listed only 1 of the 2 windows in the workspace,
+    // so Cmd+Tab showed just the current window. AeroSpace is asked fresh on
+    // every Tab (about 20 ms), and macOS's early list is checked against
+    // that fresh list in show(), so an early list can never hide a window.
+    //
+    // The price: every Cmd press (Cmd+C, Cmd+V, ...) asks macOS once, about
+    // 40 to 60 ms of background work that is thrown away when no Tab
+    // follows. No screenshots are taken early, those stay fresh at the
+    // moment you press Tab.
+
+    // Set to false to switch the early start off (back to asking on Tab).
+    private let prefetchOnCmdPress = true
+    // How old (seconds since it was asked) an early answer may be.
+    private let prefetchMaxAge: Double = 1.5
+
+    private struct ListsPrefetch {
+        let startedAt: Date
+        let content: Task<SCShareableContent?, Never>
+    }
+    private var prefetch: ListsPrefetch?
+
+    // macOS's window list for screenshots. excludingDesktopWindows skips the
+    // wallpaper/desktop-icon layer, never something you'd want in the
+    // switcher anyway, so this is a free speedup. onScreenWindowsOnly was
+    // tried too, but it silently drops any window you've manually minimized
+    // (yellow button) since a minimized window isn't technically "on
+    // screen", so it's false. With a time limit (see withTimeout in
+    // ThumbnailCapture.swift): if macOS never answers, this ends as nil
+    // after a few seconds instead of leaving the switcher "loading" forever.
+    private static func fetchShareableContent() -> Task<SCShareableContent?, Never> {
+        Task {
+            await withTimeout(seconds: screenshotServiceTimeout, label: "ScreenCaptureKit window list") {
+                try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false)
+            } ?? nil
+        }
+    }
+
+    // Called by HotkeyManager the moment Cmd goes down, and by hide() (see
+    // prefetchIfCmdHeld). Only starts the question in the background and
+    // returns at once (it runs inside the key handler, which must never
+    // wait).
+    func prefetchLists() {
+        guard prefetchOnCmdPress, !sessionActive else { return }
+        // Asked a moment ago already: that answer is still good.
+        if let p = prefetch, Date().timeIntervalSince(p.startedAt) < 0.5 { return }
+        prefetch = ListsPrefetch(startedAt: Date(), content: Self.fetchShareableContent())
+    }
+
+    // The early start also runs when Cmd is ALREADY held: seen 2026-11-04,
+    // the owner switches in bursts holding Cmd the whole time (Tab, F to
+    // confirm, Tab, F, ...), so Cmd never goes down again. Called when a
+    // panel closes (hide). CGEventSource reads the keyboard's real state.
+    func prefetchIfCmdHeld() {
+        guard CGEventSource.flagsState(.combinedSessionState).contains(.maskCommand) else { return }
+        prefetchLists()
+    }
+
+    // MARK: Screenshots started before AeroSpace answers
+    //
+    // AeroSpace takes about 20 to 45 ms to say which windows are in this
+    // workspace, and the screenshots used to wait for that. Usually the
+    // answer is the same windows as the last time, so show() starts their
+    // screenshots right away and only waits for AeroSpace to know which ones
+    // to keep. lastAllWindows is every workspace's windows from the last
+    // Cmd+Tab, lastFocusedWorkspace the workspace AeroSpace last reported
+    // focus in (main.swift calls noteFocusedWorkspace on every focus event,
+    // so switching workspaces in between is known).
+    private var lastAllWindows: [AeroWindow] = []
+    private var lastFocusedWorkspace: String?
+
+    func noteFocusedWorkspace(_ workspace: String) {
+        lastFocusedWorkspace = workspace
+    }
+
+    private func guessedWindowIDs() -> Set<String> {
+        guard let workspace = lastFocusedWorkspace else { return [] }
+        return Set(lastAllWindows.filter { $0.workspace == workspace }.map { $0.id })
+    }
+
+    // The early answer, if it isn't too old, and forgets it either way
+    // (each early start is used at most once).
+    private func takePrefetch() -> ListsPrefetch? {
+        defer { prefetch = nil }
+        guard let p = prefetch, Date().timeIntervalSince(p.startedAt) <= prefetchMaxAge else { return nil }
+        return p
+    }
+
     private func show() {
         guard !isLoading else {
             logWarn("Switcher: still loading from an earlier press, ignoring this one")
@@ -219,26 +320,36 @@ class SwitcherWindowController: NSObject {
             // for one to finish before starting the next. The AeroSpace
             // calls also run off the main actor so the subprocess wait
             // can't stall the UI.
-            async let windowListTask = Task.detached { getWindows(scope: "focused") }.value
-            // excludingDesktopWindows skips the wallpaper/desktop-icon layer
-            // from the enumeration, never something you'd want in the
-            // switcher anyway, so this is a free speedup. onScreenWindowsOnly
-            // was tried too, but it silently drops any window you've
-            // manually minimized (yellow button) since a minimized window
-            // isn't technically "on screen" — since you do minimize things
-            // sometimes, that trade wasn't worth it, so it's back to false.
-            // With a time limit (see withTimeout in ThumbnailCapture.swift):
-            // if macOS never answers, this ends as nil after a few seconds
-            // instead of leaving the switcher "loading" forever.
-            async let contentTask: SCShareableContent? = withTimeout(seconds: screenshotServiceTimeout, label: "ScreenCaptureKit window list") {
-                try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false)
-            } ?? nil
-            async let workspaceNameTask = Task.detached { getCurrentWorkspaceName() }.value
-            // Needed for orphanedRunningApps below — has to be the FULL
-            // cross-workspace list, not just this workspace's, since "zero
-            // windows on the entire Mac" is what actually makes an app
-            // unreachable, not just "zero windows here."
-            async let allWindowsTask = Task.detached { getWindows(scope: "all") }.value
+            //
+            // macOS's list was usually already asked for the moment Cmd went
+            // down (prefetchLists, above) and is ready by now. AeroSpace is
+            // always asked fresh, see the MARK above for why.
+            //
+            // Only ONE question goes to AeroSpace first: AeroSpace answers
+            // questions one after another, so asking three at once (this
+            // window list, the workspace name, every workspace's windows)
+            // made this first answer wait for the others. Measured
+            // 2026-11-04: one question alone about 20 ms, three at once about
+            // 33 ms. The workspace name is already in each window's line of
+            // this list, and the every-workspace list is only needed after
+            // the screenshots, so it starts once this answer is in.
+            let early = takePrefetch()
+            let windowListTask = Task.detached { getWindows(scope: "focused") }
+            let contentTask = early?.content ?? Self.fetchShareableContent()
+
+            // While AeroSpace is still answering, start the screenshots of
+            // the windows this workspace had at the last Cmd+Tab (see
+            // guessedWindowIDs). The pictures are still taken now, after you
+            // pressed Tab, and only windows in AeroSpace's real answer below
+            // get a card; a guessed window that is gone is simply ignored,
+            // and a new window gets its screenshot started after the answer.
+            let guessIDs = guessedWindowIDs()
+            var startedEarly: [String: Task<NSImage?, Never>] = [:]
+            if !guessIDs.isEmpty, let guessContent = await contentTask.value {
+                for scWindow in guessContent.windows where guessIDs.contains(String(scWindow.windowID)) {
+                    startedEarly[String(scWindow.windowID)] = startCapture(scWindow)
+                }
+            }
 
             // Used to bail out here the moment the workspace had zero real
             // windows open — but an empty workspace can still have greyed
@@ -246,15 +357,36 @@ class SwitcherWindowController: NSObject {
             // just aren't running yet), so keep going even when this is
             // empty and only actually give up once launcher tiles turn out
             // to be empty too, below.
-            let rawWindows = await windowListTask
-            // Awaited here (rather than later) so the MRU sort below knows
-            // which workspace's own history to use. Costs nothing extra:
-            // this task started concurrently with the others above, so by
-            // now it's essentially always already finished.
-            let workspaceName = await workspaceNameTask
+            let rawWindows = await windowListTask.value
+            // Needed for orphanedRunningApps below — has to be the FULL
+            // cross-workspace list, not just this workspace's, since "zero
+            // windows on the entire Mac" is what actually makes an app
+            // unreachable, not just "zero windows here." Runs while the
+            // screenshots are taken, it's awaited after them.
+            async let allWindowsTask = Task.detached { getWindows(scope: "all") }.value
+            // The workspace the windows are in. Only an EMPTY workspace needs
+            // its own question to AeroSpace for its name.
+            let workspaceName: String?
+            if let name = rawWindows.first?.workspace, !name.isEmpty {
+                workspaceName = name
+            } else {
+                workspaceName = await Task.detached { getCurrentWorkspaceName() }.value
+            }
             let windows = mru?.sorted(rawWindows, workspace: workspaceName) ?? rawWindows
 
-            let content = await contentTask
+            var content = await contentTask.value
+            // macOS's early list can miss a window that opened between Cmd
+            // and Tab, and a window missing from it gets no card at all. So
+            // if AeroSpace lists a window the early list doesn't have, ask
+            // macOS again (costs the old 40 to 60 ms, only in that case).
+            var listsSource = early == nil ? "fresh" : "early macOS list"
+            if early != nil, let known = content {
+                let knownIDs = Set(known.windows.map { String($0.windowID) })
+                if !rawWindows.allSatisfy({ knownIDs.contains($0.id) }) {
+                    content = await Self.fetchShareableContent().value
+                    listsSource += ", macOS list asked again"
+                }
+            }
             if content == nil {
                 logWarn("Switcher: ScreenCaptureKit gave no window list (Screen Recording problem?), so no thumbnails")
             }
@@ -262,7 +394,8 @@ class SwitcherWindowController: NSObject {
             // part was slow: asking AeroSpace and macOS for the window lists,
             // or the screenshots.
             let listsMs = Int(Date().timeIntervalSince(startedAt) * 1000)
-            let (loaded, lateCount) = await captureAll(windows, content: content) { [weak self] id, image in
+            let usedEarly = windows.filter { startedEarly[$0.id] != nil }.count
+            let (loaded, lateCount) = await captureAll(windows, content: content, started: startedEarly) { [weak self] id, image in
                 self?.applyLateImage(id: id, image: image, session: session)
             }
             let screenshotsMs = Int(Date().timeIntervalSince(startedAt) * 1000) - listsMs
@@ -272,6 +405,9 @@ class SwitcherWindowController: NSObject {
             // snapshot before asking it anything, so orphanedRunningApps
             // below always sees the freshest "last known workspace" data.
             self.appWorkspaceTracker.record(allWindows)
+            // For the next Cmd+Tab's early screenshots (guessedWindowIDs).
+            self.lastAllWindows = allWindows
+            if let workspaceName { self.lastFocusedWorkspace = workspaceName }
             // Apps running with no window anywhere AND no config entry in
             // any workspace — added on top of your configured tiles rather
             // than replacing them, so a genuinely homeless running app is
@@ -284,11 +420,13 @@ class SwitcherWindowController: NSObject {
             // + orphaned "No window" tiles) ahead of fully Quit apps, so
             // the row reads left-to-right as "stuff you could jump
             // straight to" before "stuff that needs a fresh launch."
-            self.launcherItems = sortedLauncherItems(configuredLauncherItems + orphanedRunningApps(allWindows: allWindows, workspace: workspaceName, tracker: self.appWorkspaceTracker))
+            let tiles = configuredLauncherItems + orphanedRunningApps(allWindows: allWindows, workspace: workspaceName, tracker: self.appWorkspaceTracker)
+            self.launcherRunning = launcherRunningStates(tiles)
+            self.launcherItems = sortedLauncherItems(tiles, running: self.launcherRunning)
 
             // Truly nothing to show at all — no real windows, no launcher
             // tiles either. Only now is there actually nothing to open for.
-            logInfo("Switcher: workspace \(workspaceName), AeroSpace windows \(rawWindows.count), thumbnails \(loaded.count), launcher tiles \(self.launcherItems.count), took \(Int(Date().timeIntervalSince(startedAt) * 1000)) ms (window lists \(listsMs) ms, screenshots \(screenshotsMs) ms, \(lateCount) late)")
+            logInfo("Switcher: workspace \(workspaceName), AeroSpace windows \(rawWindows.count), thumbnails \(loaded.count), launcher tiles \(self.launcherItems.count), took \(Int(Date().timeIntervalSince(startedAt) * 1000)) ms (window lists \(listsMs) ms \(listsSource), screenshots \(screenshotsMs) ms, \(usedEarly) of \(windows.count) started early, \(lateCount) late)")
             guard !loaded.isEmpty || !self.launcherItems.isEmpty else {
                 logWarn("Switcher: nothing to show (no windows with thumbnails, no launcher tiles), not opening")
                 sessionActive = false
@@ -339,6 +477,9 @@ class SwitcherWindowController: NSObject {
             }
 
             self.present()
+            // The whole wait you see, including drawing the panel, which the
+            // "took" above doesn't cover.
+            logInfo("Switcher: panel on screen \(Int(Date().timeIntervalSince(startedAt) * 1000)) ms after Cmd+Tab")
         }
     }
 
@@ -820,7 +961,7 @@ class SwitcherWindowController: NSObject {
                     // Only worth checking isAppRunning for tiles actually
                     // shown on this page, not the whole roster every time.
                     let appsRow = launcherRows[rowIdx - realRows.count]
-                    visibleLauncher.append(appsRow.map { LauncherTile(app: $0, isRunning: isAppRunning($0)) })
+                    visibleLauncher.append(appsRow.map { LauncherTile(app: $0, isRunning: launcherRunning[$0.id] ?? isAppRunning($0)) })
                 }
             }
         }
@@ -957,6 +1098,54 @@ class SwitcherWindowController: NSObject {
         return (win, hosting)
     }
 
+    // MARK: Warm-up at launch
+    //
+    // Measured 2026-11-04: the FIRST Cmd+Tab after AeroSwitcher starts took
+    // 300 to 580 ms instead of about 100. Drawing the panel the first time
+    // took about 200 ms (SwiftUI building everything for the first time),
+    // and macOS's first screenshots were slow too (130 to 320 ms). So at
+    // launch, main.swift calls this once:
+    //   1. The panel is built and drawn once with one made-up card, into an
+    //      image in memory. The window is never shown, nothing appears on
+    //      screen, and the image is thrown away.
+    //   2. A few seconds later (start-up must never wait for it), macOS is
+    //      asked for its window list and one tiny screenshot of a window
+    //      that is on screen. Nothing is saved or shown, the picture is
+    //      thrown away. Skipped quietly without Screen Recording permission.
+    func warmUp() {
+        let startedAt = Date()
+        let savedItems = items
+        items = [ThumbnailItem(id: "warm-up", appPID: getpid(), appName: "AeroSwitcher",
+                               image: iconPlaceholder(forAppPID: getpid()))]
+        let (_, hosting) = ensureWindow()
+        let (panelView, size) = currentPanelViewAndSize()
+        hosting.rootView = panelView
+        hosting.frame = NSRect(x: 0, y: 0, width: size.width, height: size.height)
+        hosting.layoutSubtreeIfNeeded()
+        if let picture = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) {
+            hosting.cacheDisplay(in: hosting.bounds, to: picture)
+        }
+        items = savedItems
+        logInfo("Warm-up: panel drawn once in memory in \(Int(Date().timeIntervalSince(startedAt) * 1000)) ms")
+
+        guard #available(macOS 14.0, *) else { return }
+        Task.detached {
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            let t0 = Date()
+            guard let content = await withTimeout(seconds: screenshotServiceTimeout, label: "Warm-up window list", {
+                try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+            }) ?? nil,
+                  let window = content.windows.first(where: { $0.windowLayer == 0 && $0.frame.width > 100 && $0.frame.height > 100 })
+            else { return }
+            let config = SCStreamConfiguration()
+            config.width = 16
+            config.height = 16
+            config.showsCursor = false
+            let ok = (try? await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(desktopIndependentWindow: window), configuration: config)) != nil
+            logInfo("Warm-up: screenshot service \(ok ? "ready" : "did not take the test picture") in \(Int(Date().timeIntervalSince(t0) * 1000)) ms")
+        }
+    }
+
     private func present() {
         let (win, hosting) = ensureWindow()
         let (panelView, size) = currentPanelViewAndSize()
@@ -1047,6 +1236,9 @@ class SwitcherWindowController: NSObject {
         isVisible = false
         sessionActive = false
         confirmPending = false
+        // Closed with Cmd still held (confirmed with F, Escape, or a click):
+        // the next Tab can come at once, without Cmd going down again.
+        prefetchIfCmdHeld()
     }
 }
 

@@ -101,11 +101,16 @@ Task { @MainActor in
 
     hotkeys = HotkeyManager(controller: c)
     hotkeys?.start()
+    // Draws the panel once in memory (and later wakes up macOS's screenshot
+    // service), so the first Cmd+Tab isn't slow (WindowController.warmUp).
+    c.warmUp()
 
     // The menu bar icon (workspace name and menu), see MenuBar.swift.
     // It also hands every focus event to the recent order (MRUTracker).
     menuBar = MenuBarController(onFocus: { windowID, workspace in
         c.mru?.recordFocus(windowID: windowID, workspace: workspace)
+        // Which workspace Cmd+Tab should start screenshots for early.
+        c.noteFocusedWorkspace(workspace)
     })
 
     // From here on, saving config.json reloads it, and `pkill -HUP
