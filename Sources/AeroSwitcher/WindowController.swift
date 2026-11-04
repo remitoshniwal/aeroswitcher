@@ -333,8 +333,16 @@ class SwitcherWindowController: NSObject {
             // 33 ms. The workspace name is already in each window's line of
             // this list, and the every-workspace list is only needed after
             // the screenshots, so it starts once this answer is in.
+            //
+            // Changed 2026-11-05: that ONE question is now "every window,
+            // and which workspace is focused" (getWindowsWithFocus,
+            // AeroSpaceBridge.swift), which answers both at once. In normal
+            // use it costs the same (~25 ms). Right after a slide to or from
+            // a full screen game AeroSpace answered each question slowly
+            // (70 to 860 ms), and the second question alone added about
+            // half a second. If it fails, the old two questions are asked.
             let early = takePrefetch()
-            let windowListTask = Task.detached { getWindows(scope: "focused") }
+            let windowListTask = Task.detached { getWindowsWithFocus() }
             let contentTask = early?.content ?? Self.fetchShareableContent()
 
             // While AeroSpace is still answering, start the screenshots of
@@ -357,17 +365,36 @@ class SwitcherWindowController: NSObject {
             // just aren't running yet), so keep going even when this is
             // empty and only actually give up once launcher tiles turn out
             // to be empty too, below.
-            let rawWindows = await windowListTask.value
+            let oneAnswer = await windowListTask.value
+            let rawWindows: [AeroWindow]
+            if let oneAnswer {
+                // This workspace's windows, in AeroSpace's own order (the
+                // same order `--workspace focused` gives, checked
+                // 2026-11-05). An empty workspace has no "focused" line, so
+                // it gets no cards and its name is asked for below.
+                rawWindows = oneAnswer.focusedWorkspace.map { name in oneAnswer.windows.filter { $0.workspace == name } } ?? []
+            } else {
+                rawWindows = await Task.detached { getWindows(scope: "focused") }.value
+            }
             // Needed for orphanedRunningApps below — has to be the FULL
             // cross-workspace list, not just this workspace's, since "zero
             // windows on the entire Mac" is what actually makes an app
-            // unreachable, not just "zero windows here." Runs while the
-            // screenshots are taken, it's awaited after them.
-            async let allWindowsTask = Task.detached { getWindows(scope: "all") }.value
+            // unreachable, not just "zero windows here." Already in the one
+            // answer above; only the old way asks for it separately, while
+            // the screenshots are taken, and it's awaited after them.
+            let allWindowsTask: Task<[AeroWindow], Never>
+            if let oneAnswer {
+                let all = oneAnswer.windows
+                allWindowsTask = Task { all }
+            } else {
+                allWindowsTask = Task.detached { getWindows(scope: "all") }
+            }
             // The workspace the windows are in. Only an EMPTY workspace needs
             // its own question to AeroSpace for its name.
             let workspaceName: String?
-            if let name = rawWindows.first?.workspace, !name.isEmpty {
+            if let name = oneAnswer?.focusedWorkspace {
+                workspaceName = name
+            } else if let name = rawWindows.first?.workspace, !name.isEmpty {
                 workspaceName = name
             } else {
                 workspaceName = await Task.detached { getCurrentWorkspaceName() }.value
@@ -379,7 +406,7 @@ class SwitcherWindowController: NSObject {
             // and Tab, and a window missing from it gets no card at all. So
             // if AeroSpace lists a window the early list doesn't have, ask
             // macOS again (costs the old 40 to 60 ms, only in that case).
-            var listsSource = early == nil ? "fresh" : "early macOS list"
+            var listsSource = (early == nil ? "fresh" : "early macOS list") + (oneAnswer == nil ? ", AeroSpace asked twice" : "")
             if early != nil, let known = content {
                 let knownIDs = Set(known.windows.map { String($0.windowID) })
                 if !rawWindows.allSatisfy({ knownIDs.contains($0.id) }) {
@@ -400,7 +427,7 @@ class SwitcherWindowController: NSObject {
             }
             let screenshotsMs = Int(Date().timeIntervalSince(startedAt) * 1000) - listsMs
             let configuredLauncherItems = missingLauncherApps(workspace: workspaceName, runningItems: loaded)
-            let allWindows = await allWindowsTask
+            let allWindows = await allWindowsTask.value
             // Keep the tracker current with today's real cross-workspace
             // snapshot before asking it anything, so orphanedRunningApps
             // below always sees the freshest "last known workspace" data.

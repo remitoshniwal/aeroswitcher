@@ -109,6 +109,74 @@ func getWindows(scope: String) -> [AeroWindow] {
     return windows
 }
 
+// One question to AeroSpace instead of two, for Cmd+Tab (show() in
+// WindowController.swift): every window on every workspace, each line also
+// saying whether its workspace is the focused one. Cmd+Tab needs both the
+// focused workspace's windows (the cards) and every workspace's windows
+// (the grey "No window" tiles), and used to ask for them one after the
+// other. AeroSpace answers questions one at a time, so right after a slide
+// to or from a full screen game, when AeroSpace answered slowly (measured
+// 2026-11-05: 70 to 860 ms per question instead of ~35 ms), each question
+// waited on its own. One question waits once.
+//
+// Returns nil when this didn't work, and Cmd+Tab then asks the old two
+// questions. An AeroSpace too old to know %{workspace-is-focused} answers
+// with an error naming it; that's remembered (aerospaceKnowsFocusedFormat)
+// so later presses don't pay for a question that can never work. Any other
+// failure (AeroSpace busy, restarting) only falls back this one time.
+//
+// focusedWorkspace is nil when the focused workspace has no windows (no
+// line says "true"), so the caller still asks for the name in that case.
+var aerospaceKnowsFocusedFormat = true  // only ever flips true to false, once
+func getWindowsWithFocus() -> (windows: [AeroWindow], focusedWorkspace: String?)? {
+    guard aerospaceKnowsFocusedFormat else { return nil }
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: aerospacePath)
+    process.arguments = ["list-windows", "--all", "--format",
+                         "%{window-id}|%{app-pid}|%{workspace}|%{workspace-is-focused}|%{app-name}|%{window-title}"]
+    let pipe = Pipe()
+    let errorPipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = errorPipe
+    do {
+        try process.run()
+    } catch {
+        logWarn("Failed to run aerospace: \(error)")
+        return nil
+    }
+    // Read before waiting, so a long answer can't fill the pipe and stall.
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else {
+        let errorText = String(data: errorData, encoding: .utf8) ?? ""
+        if errorText.contains("workspace-is-focused") {
+            aerospaceKnowsFocusedFormat = false
+            logInfo("This AeroSpace doesn't know %{workspace-is-focused}, Cmd+Tab asks it two questions instead of one from now on")
+        } else {
+            logWarn("Switcher: the one-question window list failed (exit \(process.terminationStatus)), asking the old way this time")
+        }
+        return nil
+    }
+    let output = String(data: data, encoding: .utf8) ?? ""
+    var windows: [AeroWindow] = []
+    var focusedWorkspace: String?
+    // Same filtering of AeroSwitcher's own windows as getWindows above.
+    let ownPID = ProcessInfo.processInfo.processIdentifier
+    for line in output.split(separator: "\n") {
+        // The title goes last and is the only part allowed to contain "|".
+        let parts = line.split(separator: "|", maxSplits: 5, omittingEmptySubsequences: false)
+            .map(String.init)
+        guard parts.count >= 5 else { continue }
+        let pid = Int32(parts[1]) ?? 0
+        if parts[3] == "true", !parts[2].isEmpty { focusedWorkspace = parts[2] }
+        if pid == ownPID { continue }
+        let title = parts.count >= 6 ? parts[5] : ""
+        windows.append(AeroWindow(id: parts[0], appPID: pid, workspace: parts[2], appName: shownAppName(pid: pid, reported: parts[4]), title: title))
+    }
+    return (windows, focusedWorkspace)
+}
+
 func focusWindow(id: String, pid: Int32? = nil) {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: aerospacePath)
