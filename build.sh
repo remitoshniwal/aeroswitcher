@@ -68,6 +68,10 @@ cp AppIcon.icns "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
 # handling, Phase 13). The app reads them at launch from this folder inside
 # itself. To add an app, put a new file in KnownApps/ and rebuild.
 cp -R KnownApps "$APP_BUNDLE/Contents/Resources/KnownApps"
+# AeroSpace's licence notice. Parts of AeroSwitcher are copied from AeroSpace
+# (MIT licence), and that licence asks for its notice to come with every copy
+# of the program, so it goes inside the app too.
+cp LICENSE-AeroSpace.txt "$APP_BUNDLE/Contents/Resources/LICENSE-AeroSpace.txt"
 
 # Version numbers. The version people read ("0.9.0") is the one line you edit
 # by hand, CFBundleShortVersionString in Info.plist. The build number and the

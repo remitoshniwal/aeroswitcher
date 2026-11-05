@@ -460,6 +460,12 @@ class SwitcherWindowController: NSObject {
             // For the next Cmd+Tab's early screenshots (guessedWindowIDs).
             self.lastAllWindows = allWindows
             if let workspaceName { self.lastFocusedWorkspace = workspaceName }
+            // Phase 14 B1: does AeroSwitcher's own window list (WindowTracker
+            // .swift) agree with AeroSpace's? Only writes a log line, in the
+            // background, so this press doesn't get slower. Uses AeroSpace's
+            // answer from this same press, so it costs no extra question
+            // (only a difference asks once more, 1 s later).
+            WindowTracker.shared.checkAgainstAeroSpace(allWindows)
             // Apps running with no window anywhere AND no config entry in
             // any workspace — added on top of your configured tiles rather
             // than replacing them, so a genuinely homeless running app is

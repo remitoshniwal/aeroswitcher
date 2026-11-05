@@ -113,6 +113,13 @@ Task { @MainActor in
         c.noteFocusedWorkspace(workspace)
     })
 
+    // Phase 14 B1: AeroSwitcher's own window list, watch only (it only
+    // writes a "WindowTracker:" line to the log at each Cmd+Tab, nothing on
+    // screen changes). Started after the hotkeys so Cmd+Tab works first;
+    // the slow part (the first contact with every app) runs in the
+    // background. See WindowTracker.swift, and its off switch there.
+    WindowTracker.shared.start()
+
     // From here on, saving config.json reloads it, and `pkill -HUP
     // AeroSwitcher` reloads it together with AeroSpace's config.
     settings.startWatching()

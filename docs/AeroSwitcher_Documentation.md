@@ -26,6 +26,9 @@ The app's code lives in `Sources/AeroSwitcher/`, one file per part of the app:
 | `MenuBar.swift` | The menu bar icon: workspace name, and its menu |
 | `SettingsWindow.swift` | The settings window (General, Launcher tiles, Keys, Icons) |
 | `SetupHelp.swift` | The setup checks (AeroSpace, Cmd+Tab/Accessibility, Screen Recording, recent order) and the Setup window |
+| `AccessibilityHelpers.swift` | Phase 14: reading other apps' windows through Accessibility, and the macOS call that gives a window its number (partly from AeroSpace, see `LICENSE-AeroSpace.txt`) |
+| `WindowDetection.swift` | Phase 14: AeroSpace's rules for "is this a real window, a dialog, or just a popup" |
+| `WindowTracker.swift` | Phase 14: AeroSwitcher's own live window list (watch only for now, see "AeroSwitcher's own window list" below) |
 
 They all build into one app together, so code in one file can use things from another without any extra setup. There's no separate UI framework project, no storyboard, just:
 
@@ -49,6 +52,19 @@ This requires the **Accessibility** permission (System Settings > Privacy & Secu
 ### Getting the window list
 
 Cmd+Tab uses `getWindowsWithFocus()`, which runs `aerospace list-windows --all` with `%{workspace-is-focused}` in its format: one question that gives every workspace's windows and says which workspace is focused (see "One question to AeroSpace" below). `getWindows(scope:)` runs `aerospace list-windows --workspace focused` (or `--all` for the Cmd+\` overview and as Cmd+Tab's fallback) and parses the output into a list of windows (id, app, workspace, title). AeroSwitcher's own windows (the config problems window, About, the "Hide AeroSpace's icon" dialog) are left out, so they never show up as an "AeroSwitcher" card. `focusWindow(id:)` runs `aerospace focus --window-id <id>` to actually switch to a window once you pick one. `getCurrentWorkspaceName()` runs `aerospace list-workspaces --focused` to find out which workspace (Core, Gaming, etc.) you're currently on, which the launcher tiles feature (below) needs.
+
+### AeroSwitcher's own window list (Phase 14, watch only)
+
+AeroSwitcher is slowly taking over what AeroSpace does (Phase 14 in the roadmap). The first piece is `WindowTracker` (`WindowTracker.swift`): its own list of every real window on the Mac, read straight from macOS through Accessibility, with AeroSpace's rules for telling real windows from popups (`WindowDetection.swift`). For now it only watches. Cmd+Tab still shows AeroSpace's list, and the tracker's list is only compared with it, one log line per Cmd+Tab:
+
+- `WindowTracker: watching N apps, M windows ..., first look took X ms` once at launch, then `WindowTracker: at launch: matches AeroSpace (N windows)` (or `differs`).
+- `WindowTracker: matches AeroSpace (N windows)` at a Cmd+Tab when both lists have the same windows. Popups and minimized windows are left out of the count, because AeroSpace leaves them out too.
+- `WindowTracker: differs from AeroSpace (...); only AeroSpace: <id app in workspace>; only tracker: <id app kind subrole>` when they don't, and a second line 1 second later, `1 s later: matches now` (it was only timing, a window that just opened or closed) or `1 s later: still differs` (a real difference worth looking into). Only window numbers and app names are logged, never window titles.
+- `WindowTracker: refresh took X ms, no answer yet from: <apps>` (at most once a minute) when an app is slow to answer, usually a frozen app.
+
+How it keeps up: each watched app (every app with a Dock icon, plus a menu bar app once one of its windows is in front) gets its own background thread, and asks to be told when a window is created, closed, minimized or focused. macOS also says when apps start, quit, are hidden or come to the front, and every mouse button release counts too. Any of these makes the tracker ask the apps again for their windows, which takes a few milliseconds once it has talked to an app once. Nothing in it moves or changes a window.
+
+If it ever causes trouble, turn it off in Terminal and restart AeroSwitcher: `defaults write com.aeroswitcher.app WindowTrackerOff -bool true` (and `defaults delete com.aeroswitcher.app WindowTrackerOff` to turn it back on).
 
 ### Taking the screenshots
 

@@ -8,8 +8,18 @@ AeroSpace file it came from.
 
 Files in AeroSwitcher with AeroSpace code:
 - Sources/AeroSwitcher/AccessibilityHelpers.swift
-  (from Sources/PrivateApi/include/private.h and
-  Sources/AppBundle/util/accessibility.swift)
+  (from Sources/PrivateApi/include/private.h,
+  Sources/AppBundle/util/accessibility.swift and
+  Sources/AppBundle/util/AxSubscription.swift)
+- Sources/AeroSwitcher/WindowDetection.swift
+  (from Sources/AppBundle/model/AxUiElementWindowType.swift,
+  Sources/AppBundle/model/KnownBundleId.swift and
+  Sources/AppBundle/windowLevelCache.swift)
+- Sources/AeroSwitcher/WindowTracker.swift
+  (from Sources/AppBundle/tree/MacApp.swift,
+  Sources/AppBundle/layout/refresh.swift,
+  Sources/AppBundle/GlobalObserver.swift and
+  Sources/AppBundle/normalizeLayoutReason.swift)
 
 ----------------------------------------------------------------------------
 
