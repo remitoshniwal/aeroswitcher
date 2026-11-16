@@ -48,6 +48,13 @@ func findAerospaceCLI() -> String? {
 }
 
 // MARK: - AeroSpace bridge
+//
+// Phase 14: when AeroSwitcher is its own window manager (`ownWindowManager`,
+// WorkspaceManager.swift) the functions below don't run the aerospace
+// program at all; each one starts with a line that hands the question to
+// WorkspaceManager instead and gives back the same kind of answer. That way
+// Cmd+Tab, the overview and the menu work the same with either window
+// manager, and nothing else in the app has to know which one is in charge.
 
 struct AeroWindow {
     let id: String
@@ -72,6 +79,12 @@ struct AeroWindow {
 // scope "focused" is the normal Cmd+Tab switcher (current workspace only).
 // scope "all" is for the separate all-workspaces overview (Cmd+`).
 func getWindows(scope: String) -> [AeroWindow] {
+    if ownWindowManager {
+        let all = WorkspaceManager.shared.windowsSnapshot()
+        guard scope != "all" else { return all }
+        let focused = WorkspaceManager.shared.focusedWorkspaceSnapshot()
+        return all.filter { $0.workspace == focused }
+    }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: aerospacePath)
     var args = ["list-windows"]
@@ -129,6 +142,11 @@ func getWindows(scope: String) -> [AeroWindow] {
 // line says "true"), so the caller still asks for the name in that case.
 var aerospaceKnowsFocusedFormat = true  // only ever flips true to false, once
 func getWindowsWithFocus() -> (windows: [AeroWindow], focusedWorkspace: String?)? {
+    if ownWindowManager {
+        // Instant: it's a copy kept in memory, no other program is asked.
+        // The focused workspace is given even when it has no windows.
+        return (WorkspaceManager.shared.windowsSnapshot(), WorkspaceManager.shared.focusedWorkspaceSnapshot())
+    }
     guard aerospaceKnowsFocusedFormat else { return nil }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: aerospacePath)
@@ -178,6 +196,13 @@ func getWindowsWithFocus() -> (windows: [AeroWindow], focusedWorkspace: String?)
 }
 
 func focusWindow(id: String, pid: Int32? = nil) {
+    if ownWindowManager {
+        // Called from the main thread (Cmd+Tab's confirm and cancel).
+        // Switches to the window's workspace if needed, raises the window
+        // and brings its app to the front.
+        WorkspaceManager.shared.focus(windowID: id, pid: pid)
+        return
+    }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: aerospacePath)
     process.arguments = ["focus", "--window-id", id]
@@ -204,6 +229,7 @@ func focusWindow(id: String, pid: Int32? = nil) {
 // to figure out which launcher apps belong on this particular Cmd+Tab
 // screen — see LauncherApp below.
 func getCurrentWorkspaceName() -> String? {
+    if ownWindowManager { return WorkspaceManager.shared.focusedWorkspaceSnapshot() }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: aerospacePath)
     process.arguments = ["list-workspaces", "--focused"]
@@ -225,6 +251,7 @@ func getCurrentWorkspaceName() -> String? {
 // it right now — this is what lets the overview panel show an empty
 // workspace as an empty section instead of just leaving it out entirely.
 func getAllWorkspaceNames() -> [String] {
+    if ownWindowManager { return WorkspaceManager.shared.workspaceNamesSnapshot() }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: aerospacePath)
     process.arguments = ["list-workspaces", "--all"]
@@ -248,6 +275,7 @@ func getAllWorkspaceNames() -> [String] {
 // hand focus back to when the read-only overview panel closes, since that
 // panel never focuses anything itself the way the normal switcher does.
 func getFocusedWindow() -> AeroWindow? {
+    if ownWindowManager { return WorkspaceManager.shared.focusedWindowSnapshot() }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: aerospacePath)
     process.arguments = ["list-windows", "--focused",
@@ -422,6 +450,11 @@ func runAerospace(_ arguments: [String], timeout: TimeInterval = 2) -> (ok: Bool
 // AeroSpace's own menu. A workspace with nothing open is just missing from
 // the result.
 func getAppNamesByWorkspace() -> [String: [String]] {
+    if ownWindowManager {
+        var names: [String: Set<String>] = [:]
+        for window in WorkspaceManager.shared.windowsSnapshot() { names[window.workspace, default: []].insert(window.appName) }
+        return names.mapValues { $0.sorted() }
+    }
     let result = runAerospace(["list-windows", "--all", "--format", "%{workspace}|%{app-name}"])
     guard result.ok else { return [:] }
     var names: [String: Set<String>] = [:]
@@ -448,6 +481,11 @@ func getAeroSpaceVersionText() -> String {
 }
 
 func switchToWorkspace(_ name: String) {
+    if ownWindowManager {
+        // The menu calls this on the main thread, where the manager lives.
+        DispatchQueue.main.async { WorkspaceManager.shared.switchTo(name) }
+        return
+    }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: aerospacePath)
     process.arguments = ["workspace", name]

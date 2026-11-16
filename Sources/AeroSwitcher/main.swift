@@ -76,6 +76,7 @@ _ = terminalNewWindowScript
 _ = defaultSwitcherConfig
 _ = settings  // reads config.json (launcher tiles, custom icons, keybinds), see SettingsStore
 _ = knownApps  // reads the KnownApps files inside the app (Config.swift)
+_ = ownWindowManager  // reads the OwnWindowManager setting (WorkspaceManager.swift)
 
 // MARK: - App entry
 
@@ -118,6 +119,19 @@ Task { @MainActor in
     // screen changes). Started after the hotkeys so Cmd+Tab works first;
     // the slow part (the first contact with every app) runs in the
     // background. See WindowTracker.swift, and its off switch there.
+    // Phase 14: AeroSwitcher's own window manager (WorkspaceManager.swift).
+    // The rules come from config.json; the first time, they are copied in
+    // from AeroSpace's config (only read, never changed), so they're there
+    // when the owner switches over in the Setup window.
+    importWindowManagerSectionIfMissing()
+    if ownWindowManager {
+        // Hooks into the window list, so it starts BEFORE the tracker.
+        WorkspaceManager.shared.start()
+    } else {
+        // AeroSpace is in charge. If an earlier run of AeroSwitcher's own
+        // window manager left windows parked off screen, put them back.
+        WorkspaceManager.rescueLeftovers()
+    }
     WindowTracker.shared.start()
 
     // From here on, saving config.json reloads it, and `pkill -HUP
@@ -133,8 +147,11 @@ Task { @MainActor in
 
 // AeroSpace's version goes into the log too (asked in the background, it's a
 // separate program and can take a moment, and start-up must never wait for it).
-Task.detached {
-    logInfo(getAeroSpaceVersionText().replacingOccurrences(of: "\n", with: ", "))
+// Not with AeroSwitcher's own window manager: AeroSpace isn't used then.
+if !ownWindowManager {
+    Task.detached {
+        logInfo(getAeroSpaceVersionText().replacingOccurrences(of: "\n", with: ", "))
+    }
 }
 
 app.run()

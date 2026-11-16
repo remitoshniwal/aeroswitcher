@@ -10,8 +10,11 @@ import AppKit
 //
 // Step B0 (2026-11-05) added the window number function below. Step B1
 // added the attribute readers and the change observer further down, used by
-// the watch-only window tracker (WindowTracker.swift). Nothing here moves or
-// changes a window; that starts in B3.
+// the watch-only window tracker (WindowTracker.swift). Step B3 added the
+// last part, "Moving and resizing": the only functions in the whole app that
+// change another app's window. They are only ever called by AeroSwitcher's
+// own window manager (WorkspaceManager.swift, WindowSizing.swift), which
+// only runs when AeroSwitcher is set to manage windows itself.
 //
 // Parts of this file are copied or adapted from AeroSpace v0.21.3-Beta
 // (https://github.com/nikitabobko/AeroSpace, commit
@@ -152,4 +155,75 @@ final class AXSubscription {
         CFRunLoopRemoveSource(CFRunLoopGetCurrent(), AXObserverGetRunLoopSource(observer), .defaultMode)
         removeAll()
     }
+}
+
+// MARK: Moving and resizing (B3)
+
+// Where a window is and how big, in Accessibility's coordinates: x and y
+// are the window's TOP LEFT corner, counted from the top left corner of the
+// main screen, y growing downwards. (AppKit's NSScreen counts from the
+// BOTTOM left instead; screenRectsForWindows in WindowSizing.swift converts.)
+// Position and size come back wrapped in an "AXValue" box that has to be
+// unpacked into the right type.
+func axFrame(_ window: AXUIElement) -> CGRect? {
+    guard let rawPosition = axValue(window, kAXPositionAttribute),
+          let rawSize = axValue(window, kAXSizeAttribute),
+          CFGetTypeID(rawPosition) == AXValueGetTypeID(), CFGetTypeID(rawSize) == AXValueGetTypeID() else { return nil }
+    var position = CGPoint.zero
+    var size = CGSize.zero
+    guard AXValueGetValue(rawPosition as! AXValue, .cgPoint, &position),
+          AXValueGetValue(rawSize as! AXValue, .cgSize, &size) else { return nil }
+    return CGRect(origin: position, size: size)
+}
+
+// Can this attribute be changed at all? (The maximize check asks this about
+// "AXFullScreen": a window that can go full screen is a real window, a
+// dialog can't. See WindowSizing.swift.)
+func axIsSettable(_ element: AXUIElement, _ attribute: String) -> Bool {
+    var settable: DarwinBoolean = false
+    return AXUIElementIsAttributeSettable(element, attribute as CFString, &settable) == .success && settable.boolValue
+}
+
+@discardableResult
+func axSetPosition(_ window: AXUIElement, _ topLeft: CGPoint) -> Bool {
+    var point = topLeft
+    guard let value = AXValueCreate(.cgPoint, &point) else { return false }
+    return AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, value) == .success
+}
+
+@discardableResult
+func axSetSize(_ window: AXUIElement, _ size: CGSize) -> Bool {
+    var size = size
+    guard let value = AXValueCreate(.cgSize, &size) else { return false }
+    return AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, value) == .success
+}
+
+@discardableResult
+func axSetBool(_ element: AXUIElement, _ attribute: String, _ value: Bool) -> Bool {
+    AXUIElementSetAttributeValue(element, attribute as CFString, value as CFBoolean) == .success
+}
+
+// Moves and/or resizes a window. Copied from AeroSpace's setFrame
+// (tree/MacApp.swift): the size is set, then the position, then the size
+// AGAIN. The order matters (AeroSpace issues 143 and 335): macOS refuses a
+// size that wouldn't fit on screen at the window's CURRENT position, so the
+// first size can be cut short, and only fits once the window has moved.
+func axSetFrame(_ window: AXUIElement, topLeft: CGPoint?, size: CGSize?) {
+    if let size { axSetSize(window, size) }
+    guard let topLeft else { return }
+    axSetPosition(window, topLeft)
+    if let size { axSetSize(window, size) }
+}
+
+// "Some undocumented magic" (AeroSpace's words, disableAnimations in
+// tree/MacApp.swift, which points at yabai and Rectangle doing the same):
+// some apps (Chrome, other Electron and screen-reader aware apps) switch on
+// "AXEnhancedUserInterface" and then ANIMATE every move, which makes hiding
+// and showing windows slow and wobbly. Switching it off for the moment of
+// the move and back on afterwards makes the window jump straight there.
+func axWithoutAnimations(app: AXUIElement, _ body: () -> Void) {
+    let wasEnabled = axBool(app, "AXEnhancedUserInterface") == true
+    if wasEnabled { axSetBool(app, "AXEnhancedUserInterface", false) }
+    body()
+    if wasEnabled { axSetBool(app, "AXEnhancedUserInterface", true) }
 }

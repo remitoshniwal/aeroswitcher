@@ -199,6 +199,16 @@ Log out and back in once (or restart) to confirm it actually launches on its own
 
 ---
 
+## Optional: let AeroSwitcher manage windows instead of AeroSpace
+
+AeroSwitcher can do AeroSpace's job itself (workspaces, app rules, maximize, the Option keys), so AeroSpace isn't needed any more. It is off until you switch it on:
+
+1. Open AeroSwitcher's menu > **Settings...** > **Workspaces** and check your workspaces and app rules. The first start already copied them from `~/.aerospace.toml`.
+2. Open the menu > **Permissions** > **Setup...**, scroll to the bottom and click **Use AeroSwitcher's Own Window Manager...**. It quits AeroSpace and restarts AeroSwitcher.
+3. Remove AeroSpace from System Settings > General > Login Items.
+
+To go back, the same place in the Setup window has **Go Back to AeroSpace...**. If a window ever goes missing, the menu has **Bring Back All Windows**. Details are in the documentation, "AeroSwitcher's own window manager".
+
 ## Using it day to day
 
 - **Cmd+Tab** — opens the switcher, scoped to whatever AeroSpace workspace you're currently on. Keep holding Cmd and press Tab again to move to the next window, release Cmd to switch to whatever's selected.

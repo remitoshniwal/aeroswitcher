@@ -20,6 +20,11 @@ Files in AeroSwitcher with AeroSpace code:
   Sources/AppBundle/layout/refresh.swift,
   Sources/AppBundle/GlobalObserver.swift and
   Sources/AppBundle/normalizeLayoutReason.swift)
+- Sources/AeroSwitcher/WorkspaceManager.swift
+  (from Sources/AppBundle/tree/MacWindow.swift,
+  Sources/AppBundle/tree/MacApp.swift,
+  Sources/AppBundle/focus.swift and
+  Sources/AppBundle/getNativeFocusedWindow.swift)
 
 ----------------------------------------------------------------------------
 

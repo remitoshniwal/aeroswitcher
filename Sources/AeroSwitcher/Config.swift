@@ -99,6 +99,134 @@ struct SwitcherConfig: Codable {
     // `auto-reload-config = true`. Optional for the same "older files don't
     // have this key" reason as the two above; nil means on.
     var autoReloadConfig: Bool? = nil
+    // AeroSwitcher's own window manager (Phase 14): its workspaces, the
+    // rules that sort new windows into them, and the maximize settings. Only
+    // used when AeroSwitcher manages windows itself instead of AeroSpace
+    // (see WorkspaceManager.swift). Optional like the others: older files
+    // don't have it. See WindowManagerConfig just below for what's inside.
+    var windowManager: WindowManagerConfig? = nil
+}
+
+// The "windowManager" section of config.json, exactly as written there:
+//
+//   "windowManager": {
+//     "workspaces": [ {"name": "Core", "key": "q"}, {"name": "School", "key": "w"} ],
+//     "rules": [ {"app": "Google Chrome.app", "workspace": "School"} ],
+//     "toggleMaximizeKey": "f",
+//     "maximizeNewWindows": true
+//   }
+//
+// - workspaces: in the order they are shown (menu, overview). "key" is
+//   optional: Option+key goes to that workspace, Option+Shift+key sends the
+//   focused window there.
+// - rules: a NEW window whose app's place on disk CONTAINS the "app" text
+//   (capital letters don't matter) goes to that workspace. The first rule
+//   that matches wins. No match: it stays in the workspace you're in. Same
+//   idea as the `on-window-detected` rules in .aerospace.toml.
+// - toggleMaximizeKey: Option+that key flips the focused window between
+//   filling the screen and a centered 70% size (AeroSpace's alt-f).
+// - maximizeNewWindows: every new real window fills the screen. Missing
+//   means yes.
+// Everything is optional so a half-written section still loads; mistakes
+// are reported in the problems window (resolveWindowManager, below).
+struct WindowManagerConfig: Codable {
+    struct Workspace: Codable {
+        var name: String
+        var key: String? = nil
+    }
+    struct Rule: Codable {
+        var app: String
+        var workspace: String
+    }
+    var workspaces: [Workspace]? = nil
+    var rules: [Rule]? = nil
+    var toggleMaximizeKey: String? = nil
+    var maximizeNewWindows: Bool? = nil
+}
+
+// The same section, checked and turned into key codes once per load. This
+// is what the window manager (WorkspaceManager.swift) and the key hook
+// (HotkeyInterception.swift) read, through `windowManagerSettings`.
+struct WindowManagerSettings {
+    struct Workspace { let name: String; let keyCode: Int64? }
+    struct Rule { let appPathContains: String; let workspace: String }
+    let workspaces: [Workspace]          // empty when the section is missing
+    let rules: [Rule]
+    let toggleMaximizeKeyCode: Int64?
+    let maximizeNewWindows: Bool
+
+    static let empty = WindowManagerSettings(workspaces: [], rules: [], toggleMaximizeKeyCode: nil, maximizeNewWindows: true)
+
+    var workspaceNames: [String] { workspaces.map(\.name) }
+
+    // The first rule whose text is inside the path (capital letters ignored).
+    func workspace(forBundlePath path: String) -> String? {
+        let lowered = path.lowercased()
+        return rules.first { lowered.contains($0.appPathContains.lowercased()) }?.workspace
+    }
+
+    func workspace(forKeyCode keyCode: Int64) -> String? {
+        workspaces.first { $0.keyCode == keyCode }?.name
+    }
+}
+
+// Checks the section and reports what's wrong in the same voice as the rest
+// of the config checks. A bad entry is skipped, the rest still applies.
+func resolveWindowManager(_ config: WindowManagerConfig?, keybinds: ResolvedKeybinds, report: ConfigReport) -> WindowManagerSettings {
+    guard let config else { return .empty }
+    var workspaces: [WindowManagerSettings.Workspace] = []
+    var usedKeys: [Int64: String] = [:]
+    for (index, entry) in (config.workspaces ?? []).enumerated() {
+        let name = entry.name.trimmingCharacters(in: .whitespaces)
+        if name.isEmpty {
+            report.warning("windowManager.workspaces[\(index)] has no name, so it's skipped.")
+            continue
+        }
+        if workspaces.contains(where: { $0.name == name }) {
+            report.warning("windowManager.workspaces has \"\(name)\" twice, the second one is skipped.")
+            continue
+        }
+        var code: Int64?
+        if let key = entry.key, !key.isEmpty {
+            if let found = keyCode(forName: key) {
+                if let other = usedKeys[found] {
+                    report.warning("windowManager: \"\(name)\" and \"\(other)\" both use the key \"\(key)\", so \(name) gets no key.")
+                } else {
+                    code = found
+                    usedKeys[found] = name
+                }
+            } else {
+                report.warning("windowManager.workspaces \"\(name)\": \"\(key)\" isn't a key AeroSwitcher recognizes, so this workspace gets no key.")
+            }
+        }
+        workspaces.append(.init(name: name, keyCode: code))
+    }
+    let names = Set(workspaces.map(\.name))
+    var rules: [WindowManagerSettings.Rule] = []
+    for (index, rule) in (config.rules ?? []).enumerated() {
+        let text = rule.app.trimmingCharacters(in: .whitespaces)
+        if text.isEmpty {
+            report.warning("windowManager.rules[\(index)] has no app text, so it's skipped.")
+        } else if !names.contains(rule.workspace) {
+            report.warning("windowManager.rules[\(index)] (\"\(text)\") sends windows to \"\(rule.workspace)\", which isn't in windowManager.workspaces, so it's skipped.")
+        } else {
+            rules.append(.init(appPathContains: text, workspace: rule.workspace))
+        }
+    }
+    var toggle: Int64?
+    if let key = config.toggleMaximizeKey, !key.isEmpty {
+        if let found = keyCode(forName: key) {
+            if let other = usedKeys[found] {
+                report.warning("windowManager.toggleMaximizeKey \"\(key)\" is already the key of \"\(other)\", so the maximize toggle gets no key.")
+            } else {
+                toggle = found
+            }
+        } else {
+            report.warning("windowManager.toggleMaximizeKey is \"\(key)\", which isn't a key AeroSwitcher recognizes, so the maximize toggle gets no key.")
+        }
+    }
+    return WindowManagerSettings(workspaces: workspaces, rules: rules, toggleMaximizeKeyCode: toggle,
+                                 maximizeNewWindows: config.maximizeNewWindows ?? true)
 }
 
 // nil (key absent, e.g. an older config.json) means the same thing as true.
@@ -292,11 +420,17 @@ func describeDecodingError(_ error: Error) -> String {
 // the decode above already checked the values.
 func warnAboutUnknownKeys(in data: Data, report: ConfigReport) {
     guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
-    let topLevelKeys: Set = ["keybinds", "workspaces", "showTileStatusText", "icons", "autoReloadConfig"]
+    let topLevelKeys: Set = ["keybinds", "workspaces", "showTileStatusText", "icons", "autoReloadConfig", "windowManager"]
     let keybindKeys: Set = ["cycleNext", "cyclePrevious", "enterGreyedRow", "exitGreyedRow", "pageUp", "pageDown", "confirm", "cancel"]
     let appKeys: Set = ["name", "match", "open", "newWindowStyle", "icon"]
     for key in root.keys.sorted() where !topLevelKeys.contains(key) {
         report.warning("\"\(key)\" isn't a setting AeroSwitcher knows, so it's ignored. Check the spelling.")
+    }
+    if let section = root["windowManager"] as? [String: Any] {
+        let known: Set = ["workspaces", "rules", "toggleMaximizeKey", "maximizeNewWindows"]
+        for key in section.keys.sorted() where !known.contains(key) {
+            report.warning("windowManager.\(key) isn't a window manager setting AeroSwitcher knows, so it's ignored. Check the spelling.")
+        }
     }
     if let keybinds = root["keybinds"] as? [String: Any] {
         for key in keybinds.keys.sorted() where !keybindKeys.contains(key) {
@@ -411,6 +545,7 @@ struct LoadedSettings {
     // workspaces, matchKey paired with the already-loaded image.
     let customIcons: [(matchKey: String, icon: NSImage)]
     let keybinds: ResolvedKeybinds
+    let windowManager: WindowManagerSettings
 
     init(config: SwitcherConfig, report: ConfigReport) {
         self.config = config
@@ -428,6 +563,7 @@ struct LoadedSettings {
             loadCustomIcon(path: path, context: "icons entry \"\(name)\"", report: report).map { (name, $0) }
         }
         self.keybinds = resolveKeybinds(config.keybinds, report: report)
+        self.windowManager = resolveWindowManager(config.windowManager, keybinds: keybinds, report: report)
     }
 }
 
@@ -519,6 +655,14 @@ final class SettingsStore {
     // results end up in the same problems window. AeroSpace's reload runs
     // off the main thread, it's a separate program and takes a moment.
     func reloadTogether() {
+        if ownWindowManager {
+            // AeroSwitcher is its own window manager: there is no AeroSpace
+            // config in use, so only config.json is reloaded.
+            logInfo("Reload requested: reloading config.json.")
+            let report = reload()
+            MainActor.assumeIsolated { ConfigProblemsWindow.shared.update(report: report, aerospace: nil) }
+            return
+        }
         logInfo("Reload requested: reloading config.json and AeroSpace's config together.")
         let report = reload()
         Task.detached {
@@ -780,7 +924,8 @@ func editConfigFile(_ description: String, touching paths: [[String]], shownTree
 // order name, match, open, newWindowStyle, icon, then unknown ones. To
 // change the layout, change the key orders here.
 
-let topLevelKeyOrder = ["keybinds", "workspaces", "showTileStatusText", "autoReloadConfig", "icons"]
+let topLevelKeyOrder = ["keybinds", "workspaces", "showTileStatusText", "autoReloadConfig", "icons", "windowManager"]
+let windowManagerKeyOrder = ["workspaces", "rules", "toggleMaximizeKey", "maximizeNewWindows"]
 let keybindKeyOrder = ["cycleNext", "cyclePrevious", "enterGreyedRow", "exitGreyedRow", "pageUp", "pageDown", "confirm", "cancel"]
 let appEntryKeyOrder = ["name", "match", "open", "newWindowStyle", "icon"]
 
@@ -792,6 +937,7 @@ func houseStyleJSON(_ tree: [String: Any]) -> String {
         switch key {
         case "keybinds": rendered = jsonBlock(value, indent: 1, keyOrder: keybindKeyOrder)
         case "workspaces": rendered = workspacesBlock(value)
+        case "windowManager": rendered = windowManagerBlock(value)
         default: rendered = jsonBlock(value, indent: 1, keyOrder: [])
         }
         return "  " + jsonFragment(key) + " : " + rendered
@@ -834,6 +980,28 @@ private func workspacesBlock(_ value: Any) -> String {
         }
         let rows = list.map { "      " + appEntryLine($0) }
         return "    " + jsonFragment(name) + " : [\n" + rows.joined(separator: ",\n") + "\n    ]"
+    }
+    return "{\n" + inner.joined(separator: ",\n") + "\n  }"
+}
+
+// The "windowManager" section: one workspace and one rule per line, like the
+// launcher tiles, so the file stays easy to read and edit by hand.
+private func windowManagerBlock(_ value: Any) -> String {
+    guard let dict = value as? [String: Any], !dict.isEmpty else {
+        return jsonBlock(value, indent: 1, keyOrder: [])
+    }
+    let inner = orderedKeys(dict.keys, first: windowManagerKeyOrder).map { key -> String in
+        let item = dict[key]!
+        if (key == "workspaces" || key == "rules"), let list = item as? [Any], !list.isEmpty {
+            let order = key == "workspaces" ? ["name", "key"] : ["app", "workspace"]
+            let rows = list.map { entry -> String in
+                guard let row = entry as? [String: Any] else { return "      " + jsonFragment(entry) }
+                let parts = orderedKeys(row.keys, first: order).map { jsonFragment($0) + " : " + jsonFragment(row[$0]!) }
+                return "      { " + parts.joined(separator: ", ") + " }"
+            }
+            return "    " + jsonFragment(key) + " : [\n" + rows.joined(separator: ",\n") + "\n    ]"
+        }
+        return "    " + jsonFragment(key) + " : " + jsonBlock(item, indent: 2, keyOrder: [])
     }
     return "{\n" + inner.joined(separator: ",\n") + "\n  }"
 }
@@ -934,6 +1102,7 @@ func suggestedLauncherEntry(for app: InstalledApp) -> [String: Any] {
 var appConfig: SwitcherConfig { settings.current.config }
 var workspaceLauncherApps: [String: [LauncherApp]] { settings.current.launcherApps }
 var customIconsByMatchKey: [(matchKey: String, icon: NSImage)] { settings.current.customIcons }
+var windowManagerSettings: WindowManagerSettings { settings.current.windowManager }
 
 // The one place every icon shown anywhere in AeroSwitcher (the overview's
 // real-window icons, its homeless-app icons, and — see LauncherCard — the
@@ -1400,5 +1569,113 @@ func launchApp(_ app: LauncherApp) {
                 showFailureAlert("Couldn't open \(app.displayName)", "AeroSwitcher couldn't start the command that opens apps. \(error.localizedDescription)")
             }
         }
+    }
+}
+
+// MARK: Importing AeroSpace's rules (Phase 14)
+
+// Builds a "windowManager" section from an AeroSpace config file
+// (.aerospace.toml), so moving from AeroSpace to AeroSwitcher's own window
+// manager doesn't mean typing everything in again. It only READS that file,
+// never changes it.
+//
+// No TOML library: AeroSpace's file is read line by line, looking for the
+// few kinds of lines that matter here, which is enough because they always
+// look the same:
+//   persistent-workspaces = ["Core", "School", ...]       the workspaces, in order
+//   alt-q = 'workspace Core'                              a workspace's key
+//   { if = 'test %{app-bundle-path} ~= "Spotify.app"', run = ['move-node-to-workspace Core', ...] }   a rule
+//   alt-f = '... toggle-maximize.sh ...'                  the maximize toggle key
+//   ... maximize.applescript ...                          new windows are maximized
+// Lines starting with # are notes in TOML and are skipped. A workspace that
+// only appears in a binding (not in persistent-workspaces) is added after
+// the others. Returns nil when nothing usable was found.
+func windowManagerSectionFromAeroSpaceConfig(atPath path: String) -> [String: Any]? {
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
+    var names: [String] = []
+    var keys: [String: String] = [:]
+    var rules: [[String: Any]] = []
+    var toggleKey: String?
+    var maximize = false
+
+    func quoted(_ line: Substring) -> [String] {
+        // Every piece of text between double quotes on the line.
+        line.split(separator: "\"", omittingEmptySubsequences: false).enumerated()
+            .filter { $0.offset % 2 == 1 }.map { String($0.element) }
+    }
+    for rawLine in text.split(separator: "\n") {
+        let line = rawLine.trimmingCharacters(in: .whitespaces)
+        if line.hasPrefix("#") || line.isEmpty { continue }
+        if line.hasPrefix("persistent-workspaces") {
+            for name in quoted(Substring(line)) where !name.isEmpty && !names.contains(name) { names.append(name) }
+            continue
+        }
+        if line.contains("maximize.applescript") { maximize = true }
+        // A binding: alt-<key> = '<command>' (not alt-shift-..., those move
+        // windows and use the same key anyway).
+        if line.hasPrefix("alt-"), !line.hasPrefix("alt-shift-"), let equals = line.firstIndex(of: "=") {
+            let key = line[line.index(line.startIndex, offsetBy: 4)..<equals].trimmingCharacters(in: .whitespaces)
+            let command = line[line.index(after: equals)...].trimmingCharacters(in: CharacterSet(charactersIn: " '\""))
+            if command.hasPrefix("workspace ") {
+                let name = String(command.dropFirst("workspace ".count)).trimmingCharacters(in: .whitespaces)
+                if !name.isEmpty && keyCode(forName: key) != nil { keys[name] = key }
+                if !names.contains(name) { names.append(name) }
+            } else if command.contains("toggle-maximize") && keyCode(forName: key) != nil {
+                toggleKey = key
+            }
+            continue
+        }
+        // A rule.
+        if line.contains("%{app-bundle-path}"), let move = line.range(of: "move-node-to-workspace ") {
+            guard let app = quoted(Substring(line)).first, !app.isEmpty else { continue }
+            let rest = line[move.upperBound...]
+            let workspace = String(rest.prefix { $0 != "'" && $0 != "\"" && $0 != "," && $0 != "]" }).trimmingCharacters(in: .whitespaces)
+            guard !workspace.isEmpty else { continue }
+            rules.append(["app": app, "workspace": workspace])
+            if !names.contains(workspace) { names.append(workspace) }
+        }
+    }
+    guard !names.isEmpty else { return nil }
+    var section: [String: Any] = [
+        "workspaces": names.map { name -> [String: Any] in
+            var entry: [String: Any] = ["name": name]
+            if let key = keys[name] { entry["key"] = key }
+            return entry
+        },
+        "rules": rules,
+        "maximizeNewWindows": maximize,
+    ]
+    if let toggleKey { section["toggleMaximizeKey"] = toggleKey }
+    return section
+}
+
+// Where AeroSpace's config file is, if there is one. Same two places
+// AeroSpace itself looks. (Asking AeroSpace with `config --config-path`
+// would need it running, which it isn't once AeroSwitcher manages windows.)
+func aeroSpaceConfigFilePath() -> String? {
+    let home = FileManager.default.homeDirectoryForCurrentUser.path
+    let candidates = [home + "/.aerospace.toml", home + "/.config/aerospace/aerospace.toml"]
+    return candidates.first { FileManager.default.fileExists(atPath: $0) }
+}
+
+// Once, at launch: if config.json has no "windowManager" section yet and
+// AeroSpace's config exists, the section is filled in from it, so the
+// Workspaces tab in Settings starts with the owner's real setup. Never
+// touches a section that is already there, even an empty one (that is the
+// owner's own choice). Main thread.
+@MainActor
+func importWindowManagerSectionIfMissing() {
+    let snapshot = readConfigSnapshot()
+    guard let tree = snapshot.tree, tree["windowManager"] == nil else { return }
+    guard let path = aeroSpaceConfigFilePath(),
+          let section = windowManagerSectionFromAeroSpaceConfig(atPath: path) else { return }
+    let workspaces = (section["workspaces"] as? [Any])?.count ?? 0
+    let rules = (section["rules"] as? [Any])?.count ?? 0
+    let outcome = editConfigFile("import the window manager rules from AeroSpace's config",
+                                 touching: [["windowManager"]], shownTree: tree) { tree in
+        tree["windowManager"] = section
+    }
+    if case .saved = outcome {
+        logInfo("Imported \(workspaces) workspaces and \(rules) app rules from \(path) into config.json (windowManager). AeroSpace's file was only read.")
     }
 }

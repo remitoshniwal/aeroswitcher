@@ -34,6 +34,16 @@ class HotkeyManager {
     // fails again, since it can be called every couple of seconds.
     func start(retry: Bool = false) {
         guard eventTap == nil else { return }
+        // TEST ONLY: a test copy (AEROSWITCHER_CONFIG_DIR set) started with
+        // AEROSWITCHER_NO_HOTKEYS=1 never makes the hook, so it can't catch
+        // the owner's real Cmd+Tab or Option keys while it runs (it happened
+        // once, see CLAUDE.md). The window manager test drives it through
+        // AEROSWITCHER_WM_COMMAND_FILE instead (WorkspaceManager.swift).
+        let environment = ProcessInfo.processInfo.environment
+        if environment["AEROSWITCHER_CONFIG_DIR"] != nil, environment["AEROSWITCHER_NO_HOTKEYS"] == "1" {
+            if !retry { logInfo("TEST: AEROSWITCHER_NO_HOTKEYS is set, Cmd+Tab and the Option keys are NOT handled by this copy") }
+            return
+        }
         // keyUp is only needed for one thing: knowing when S/W is let go
         // after holding it to glide through the overview (see the keyUp
         // block in handle()). Every other key release passes straight
@@ -109,6 +119,13 @@ class HotkeyManager {
         // so anything with Option held is handed straight back untouched,
         // before any other logic below even looks at it.
         if event.flags.contains(.maskAlternate) {
+            // Phase 14: when AeroSwitcher is its own window manager, the
+            // Option keys AeroSpace used to have are AeroSwitcher's now
+            // (handleWindowManagerKey, below). Everything else with Option
+            // still goes straight through untouched.
+            if ownWindowManager, type == .keyDown, handleWindowManagerKey(event) {
+                return nil
+            }
             return Unmanaged.passRetained(event)
         }
 
@@ -225,5 +242,40 @@ class HotkeyManager {
 
         return Unmanaged.passRetained(event)
     }
-}
 
+    // The window manager's keys (only when AeroSwitcher is its own window
+    // manager), set in config.json's "windowManager" section or Settings >
+    // Workspaces:
+    //   Option + a workspace's key           show that workspace
+    //   Option + Shift + a workspace's key   send the focused window there
+    //   Option + the toggle key              maximized <-> centered 70%
+    // true = it was one of them, swallow it so the app in front never sees
+    // it. Cmd or Ctrl held too means it's some other shortcut, left alone.
+    // A key held down repeats; only the first press counts, so holding
+    // Option+Q doesn't switch over and over.
+    private func handleWindowManagerKey(_ event: CGEvent) -> Bool {
+        if event.flags.contains(.maskCommand) || event.flags.contains(.maskControl) { return false }
+        // Paused (AeroSpace running, no workspaces...): the keys go through
+        // untouched, so whoever else wants them still gets them.
+        guard WorkspaceManager.shared.isManaging else { return false }
+        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        let rules = windowManagerSettings
+        let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+        let manager = WorkspaceManager.shared
+        if let name = rules.workspace(forKeyCode: keyCode) {
+            if !isRepeat {
+                if event.flags.contains(.maskShift) {
+                    manager.moveFocusedWindow(to: name)
+                } else {
+                    manager.switchTo(name)
+                }
+            }
+            return true
+        }
+        if keyCode == rules.toggleMaximizeKeyCode, !event.flags.contains(.maskShift) {
+            if !isRepeat { manager.toggleMaximize() }
+            return true
+        }
+        return false
+    }
+}

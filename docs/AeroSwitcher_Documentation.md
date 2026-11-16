@@ -28,7 +28,9 @@ The app's code lives in `Sources/AeroSwitcher/`, one file per part of the app:
 | `SetupHelp.swift` | The setup checks (AeroSpace, Cmd+Tab/Accessibility, Screen Recording, recent order) and the Setup window |
 | `AccessibilityHelpers.swift` | Phase 14: reading other apps' windows through Accessibility, and the macOS call that gives a window its number (partly from AeroSpace, see `LICENSE-AeroSpace.txt`) |
 | `WindowDetection.swift` | Phase 14: AeroSpace's rules for "is this a real window, a dialog, or just a popup" |
-| `WindowTracker.swift` | Phase 14: AeroSwitcher's own live window list (watch only for now, see "AeroSwitcher's own window list" below) |
+| `WindowTracker.swift` | Phase 14: AeroSwitcher's own live window list (see "AeroSwitcher's own window list" below) |
+| `WorkspaceManager.swift` | Phase 14: AeroSwitcher's own window manager, off until you switch it on (see "AeroSwitcher's own window manager" below) |
+| `WindowSizing.swift` | Phase 14: maximizing new windows and the maximize toggle for the own window manager, plus the screen sizes |
 
 They all build into one app together, so code in one file can use things from another without any extra setup. There's no separate UI framework project, no storyboard, just:
 
@@ -64,7 +66,45 @@ AeroSwitcher is slowly taking over what AeroSpace does (Phase 14 in the roadmap)
 
 How it keeps up: each watched app (every app with a Dock icon, plus a menu bar app once one of its windows is in front) gets its own background thread, and asks to be told when a window is created, closed, minimized or focused. macOS also says when apps start, quit, are hidden or come to the front, and every mouse button release counts too. Any of these makes the tracker ask the apps again for their windows, which takes a few milliseconds once it has talked to an app once. Nothing in it moves or changes a window.
 
-If it ever causes trouble, turn it off in Terminal and restart AeroSwitcher: `defaults write com.aeroswitcher.app WindowTrackerOff -bool true` (and `defaults delete com.aeroswitcher.app WindowTrackerOff` to turn it back on).
+If it ever causes trouble, turn it off in Terminal and restart AeroSwitcher: `defaults write com.aeroswitcher.app WindowTrackerOff -bool true` (and `defaults delete com.aeroswitcher.app WindowTrackerOff` to turn it back on). The own window manager (next section) needs it, and pauses while it is off.
+
+What the log showed after 9 days of normal use with AeroSpace (2026-11-05 to 2026-11-14, 1600 Cmd+Tabs, about 470 comparisons): almost every comparison matched. Every "still differs" had one of these explanations, none of them a bug in the tracker:
+- **One minimized Obsidian window AeroSpace still lists in a workspace** (window 53, a very old window number, and once a Finder window next to it). AeroSpace's own code (`normalizeLayoutReason.swift`) moves every minimized window out of its workspace at each update, so for this one window AeroSpace's "is it minimized?" must get a different answer than the tracker's. Not explained further; it is one window, it only affects whether a hidden window is counted, and the own window manager simply leaves minimized windows alone (never parks them).
+- **A window only the tracker has, for a few seconds after it opened or while an app is slow** (Claude, WhatsApp, Books, System Settings, Hollow Knight). These are windows AeroSpace hadn't registered yet; the next comparison matched.
+- **A game window in macOS full screen on another Space** (Hollow Knight Silksong), seen by one side and not the other while the Space slid. Matched once the slide was over.
+- **A Steam Helper popup** sorted as a dialog by one and as a popup by the other for a moment while it opened.
+
+### AeroSwitcher's own window manager (Phase 14, off until you switch it on)
+
+AeroSwitcher can do AeroSpace's job itself: show one workspace, hide the others, sort new windows into workspaces by app, make every new window fill the screen, and the Option keys. It is **off** until you switch it on in the Setup window (menu > Permissions > Setup..., at the bottom: **Use AeroSwitcher's Own Window Manager...**). Until then nothing below runs and AeroSpace works exactly as before.
+
+**Settings.** Settings > Workspaces (or the `windowManager` section of config.json, see the config file section): the workspaces in order, each with an optional key, the app rules, and the maximize settings. The first time AeroSwitcher starts with this version, it fills that section in from your `~/.aerospace.toml` (only reading it): your 6 workspaces with alt-q/w/e/a/s/d, your 19 app rules, alt-f, and maximize on. A section that already exists is never replaced, except by the Import button in Settings.
+
+**Keys** (only while it manages windows):
+- Option + a workspace's key: show that workspace.
+- Option + Shift + a workspace's key: send the focused window there (you stay where you are).
+- Option + the toggle key (F): the focused window flips between filling the screen and a centered 70% size.
+
+**How a window is hidden.** macOS can't make another app's window invisible, so it is moved into the bottom right corner of the screen with one point of it left on screen ("parked"), AeroSpace's own trick. Showing it again moves it back to where it was.
+
+**What it does on its own:**
+- A new window goes to the workspace of the first rule whose text is in the app's place on disk (`Google Chrome.app`), else to the workspace you are in. A real window (one that can go full screen) is made to fill the screen, a dialog is left alone, the same check `maximize.applescript` used. If the new window lands in another workspace it is parked right away.
+- Clicking an app in the Dock (or a notification) whose window is in another workspace shows that workspace.
+- Cmd+Tab, the Cmd+\` overview and the menu read its list directly, with no other program asked, so Cmd+Tab never waits for AeroSpace any more.
+- Minimized windows, windows in macOS full screen and windows of a hidden app (Cmd+H) are never parked.
+
+**Never losing a window:**
+- Where every parked window was is written to `window-state.json` (next to config.json) before it is moved.
+- Quitting AeroSwitcher (menu, `pkill`, Ctrl+C) moves every parked window back first (log: `WorkspaceManager: quitting, moved N of M parked windows back on screen`).
+- After a crash, the next start reads the file: in own mode the windows keep their workspaces, in AeroSpace mode they are moved back on screen.
+- Menu > **Bring Back All Windows** moves every window into the workspace you are in and on screen, including any left in the corner by something else.
+- It pauses (and puts every window back on screen) whenever AeroSpace is running, Accessibility is off, or there are no workspaces. The menu bar shows a warning symbol and the reason, and the Option keys go through untouched while paused.
+
+**Switching.** Setup window, bottom section. **Use AeroSwitcher's Own Window Manager...** remembers which window AeroSpace had in which workspace, quits AeroSpace (which puts its hidden windows back), and restarts AeroSwitcher. Remove AeroSpace from Login Items yourself, or it starts at login and AeroSwitcher pauses. **Go Back to AeroSpace...** puts every window back on screen, restarts AeroSwitcher in AeroSpace mode and starts AeroSpace again. Your `~/.aerospace.toml` is never changed by either.
+
+**Log lines** start with `WorkspaceManager:` (`Core -> School, 3 shown, 2 parked`, `new windows: ...`, `paused: ...`). Window titles are never logged.
+
+**Known limits:** only tested with one display. Switching to an empty workspace leaves the previous app in front, and clicking that same app's Dock icon then does nothing (press its workspace key instead). An app that moves its own window back on screen while parked is parked again at the next update. Windows of an app that answers slowly appear in Cmd+Tab a moment late.
 
 ### Taking the screenshots
 
@@ -276,13 +316,14 @@ None of this ever uses the macOS calls that pop up a permission dialog (`CGReque
 
 ![Settings, Keys tab](images/settings-keys.png)
 
-**Settings...** in the menu bar menu opens a window that can change everything config.json can, so the file never has to be edited by hand (it still can be). Four tabs:
+**Settings...** in the menu bar menu opens a window that can change everything config.json can, so the file never has to be edited by hand (it still can be). Five tabs:
 
 - **General**: the Running / Quit / No window text under launcher tiles (`showTileStatusText`), auto reload (`autoReloadConfig`), **Launch at login** and **Hide AeroSpace's icon** (the same code as the menu items), buttons to open config.json, show it in Finder, or reload both configs, and **Show log** (see **Log file**).
 - **Launcher tiles**: AeroSpace's workspaces on the left, that workspace's tiles on the right. **Add app...** lists the apps that are running and installed (with a search field, and **Other...** for an app somewhere else). The minus button removes a tile. The arrow next to a tile shows its fields (name, match, open, new window style) to fix by hand. A workspace that config.json has but AeroSpace doesn't is marked, with a button to remove it. There's no reordering on purpose: tiles are always shown alphabetically, Running before Quit, whatever order the file has.
 - **Keys**: each key used while the switcher is open, with **Record**: click it, press the key. Cmd may be held. Tab is refused (it's always Cmd+Tab), keys AeroSwitcher doesn't know (F-keys, punctuation) are refused, Space gets a warning (Spotlight wins Cmd+Space). A key another action already uses asks whether to swap the two. **Reset to defaults** puts D A S W Q E F Escape back. Cmd+Tab, Cmd+Shift+Tab and Cmd+\` are shown but fixed.
 - **Icons**: every launcher-tile app, every app with a custom icon, and every running app. **Choose image...** picks a picture, **Remove** goes back to the app's own icon. The image file is not copied, so leave it where it is. A path that can't be loaded is shown in red.
   - **Use icons from a folder...** sets many icons at once. Pick a folder of images named after your apps (`calendar.png`, `vs code.png`, `ableton.png`). Each image is matched to an app by its file name, ignoring capitals, spaces and punctuation: the file name has to be one of the app's names (its tile name, match or open name, or its name while running), or, for names of 4 letters or more, part of one ("settings" finds a running "System Settings", marked as a close match). A list shows every app with its current and new icon, all ticked, plus the images that matched nothing. Untick what's wrong and click **Use**: everything is saved in one change. It's a one-time import, so an image added to the folder later needs another import (or **Choose image...**). Only the folder itself is searched, not folders inside it, and an app that isn't a launcher tile has to be running to be matched.
+- **Workspaces**: the `windowManager` section, used only by AeroSwitcher's own window manager (see that section). The workspaces in order, each with a name and an Option key (**None** for no key, Escape stops recording; letters and digits only), arrows to reorder, minus to remove. Renaming or removing a workspace also renames or removes the app rules that point at it, in the same save (removing asks first if rules point at it); launcher tiles under the old name are left alone and a note says so. **Add Rule...** picks an app and fills in its file name (`Google Chrome.app`). The maximize checkbox and the toggle key. **Import from AeroSpace's Config...** fills the whole section in from `~/.aerospace.toml` (only read), after showing how many workspaces and rules it found. While AeroSwitcher's own window manager is on, the Launcher tiles tab takes its workspace list from here instead of asking AeroSpace.
 
 **How it saves.** Every change is saved the moment you make it (text fields when you press Return or click elsewhere) and applies at once, even with `autoReloadConfig` off. Each change reads config.json fresh, changes only the one part it's about, and writes it back (`editConfigFile` in `Config.swift`). So:
 
@@ -307,7 +348,23 @@ A plain JSON file, created automatically the first time AeroSwitcher runs, with 
 
 It lives under `~/Library/Application Support/`, the standard place a Mac app is supposed to keep its own settings, same folder structure apps like Chrome or Slack use for theirs, rather than a loose dotfile sitting directly in your home folder. `~/Library` is hidden by default in Finder (Cmd+Shift+. in a Finder window toggles hidden files if you ever want to look at it directly), or just open it by path.
 
-It has five sections (all but `keybinds` and `workspaces` optional):
+It has six sections (all but `keybinds` and `workspaces` optional). The sixth, `windowManager`, is only used by AeroSwitcher's own window manager and is described in its own section above:
+
+```json
+  "windowManager" : {
+    "workspaces" : [
+      { "name" : "Core", "key" : "q" },
+      { "name" : "School", "key" : "w" }
+    ],
+    "rules" : [
+      { "app" : "Google Chrome.app", "workspace" : "School" }
+    ],
+    "toggleMaximizeKey" : "f",
+    "maximizeNewWindows" : true
+  }
+```
+
+The other five:
 
 ```json
 {

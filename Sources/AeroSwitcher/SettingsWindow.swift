@@ -5,13 +5,17 @@ import UniformTypeIdentifiers
 
 // MARK: - Settings window
 //
-// Opened from the menu bar ("Settings..."). Four tabs:
+// Opened from the menu bar ("Settings..."). Five tabs:
 //   General         tile status text, auto reload, launch at login, hiding
 //                   AeroSpace's icon, buttons for config.json
 //   Launcher tiles  which apps get a grey tile in which workspace
 //   Keys            the keys used while the switcher is open, recorded by
 //                   pressing them
 //   Icons           custom icons per app
+//   Workspaces      AeroSwitcher's own window manager (Phase 14): its
+//                   workspaces and their Option+keys, the rules that send
+//                   new windows to a workspace, and the maximize settings
+//                   (config.json's "windowManager" section)
 //
 // How it saves: every change is saved the moment you make it (text fields
 // when you press Return or click somewhere else), through editConfigFile in
@@ -65,6 +69,14 @@ final class SettingsModel: ObservableObject {
     @Published private(set) var launchAtLogin = false
     @Published private(set) var hidingAeroSpaceIcon = false
     @Published private(set) var recordingAction: String?
+    // Which Option+key of the Workspaces tab is being recorded, if any. Kept
+    // apart from recordingAction (the Keys tab) because these keys are
+    // stored somewhere else in config.json and follow other rules.
+    @Published private(set) var recordingWindowManagerKey: WindowManagerKeyTarget?
+    // Workspace names that were renamed or removed in the Workspaces tab
+    // while they still had launcher tiles. Only used for the note under the
+    // workspace list; the tiles themselves are never touched from there.
+    @Published private(set) var namesWithLeftoverTiles: [String] = []
     @Published var selectedWorkspace: String?
 
     // The file as plain JSON, exactly as shown. Handed to editConfigFile so
@@ -92,6 +104,12 @@ final class SettingsModel: ObservableObject {
         shownTree = snapshot.tree ?? [:]
         fileProblem = snapshot.problem
         config = snapshot.problem == nil ? snapshot.config : nil
+        // Own window manager: a workspace added or renamed in the Workspaces
+        // tab should show up in the Launcher tiles tab straight away, not
+        // only the next time the window opens.
+        if ownWindowManager {
+            aerospaceWorkspaces = windowManagerSettings.workspaceNames
+        }
         if selectedWorkspace == nil || !workspaceNames.contains(selectedWorkspace!) {
             selectedWorkspace = workspaceNames.first
         }
@@ -104,7 +122,19 @@ final class SettingsModel: ObservableObject {
 
     // Asked off the main thread: the main thread also runs the Cmd+Tab
     // event tap, and must never wait for AeroSpace (see CLAUDE.md).
+    //
+    // When AeroSwitcher manages windows itself (ownWindowManager), AeroSpace
+    // isn't running, so there is nobody to ask: the workspaces are the ones
+    // in the Workspaces tab (config.json's "windowManager" section, as the
+    // running app loaded it). The variable is still called
+    // aerospaceWorkspaces so the Launcher tiles tab works the same in both
+    // modes. refresh() keeps it up to date after every reload in that mode.
     func loadAeroSpaceWorkspaces() {
+        if ownWindowManager {
+            aerospaceWorkspaces = windowManagerSettings.workspaceNames
+            if selectedWorkspace == nil { selectedWorkspace = workspaceNames.first }
+            return
+        }
         Task.detached {
             let result = runAerospace(["list-workspaces", "--all"])
             let names = result.ok
@@ -268,6 +298,7 @@ final class SettingsModel: ObservableObject {
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
         recordingAction = nil
+        recordingWindowManagerKey = nil
     }
 
     private func recorded(_ event: NSEvent) {
@@ -330,6 +361,310 @@ final class SettingsModel: ObservableObject {
             for action in keybindActions { keybinds[action.name] = defaults[keyPath: action.keyPath] }
             tree["keybinds"] = keybinds
         }
+    }
+
+    // MARK: Workspaces (the "windowManager" section)
+    //
+    // Everything the Workspaces tab changes lives in config.json's
+    // "windowManager" section (see WindowManagerConfig in Config.swift for
+    // what it looks like). The rows the tab SHOWS come from the decoded
+    // config (model.config), but every change is made on the plain JSON
+    // tree: the section is taken out of the freshly read file, changed, and
+    // put back whole. Working on the plain tree means anything you typed
+    // into the section by hand that AeroSwitcher doesn't know (an extra key
+    // in a workspace, say) is kept instead of thrown away.
+    //
+    // The tab tries hard never to write something that would only produce a
+    // warning (a rule with no app text, two workspaces with the same name or
+    // key, a rule pointing at a workspace that's gone). A warning pops up
+    // the config problems window, which would be a strange reply to a click
+    // in Settings. Problems from hand edits are still listed in the tab.
+
+    // nil = config.json has no "windowManager" section at all (the tab then
+    // shows its empty state).
+    var windowManagerConfig: WindowManagerConfig? { config?.windowManager }
+    var windowManagerWorkspaces: [WindowManagerConfig.Workspace] { windowManagerConfig?.workspaces ?? [] }
+    var windowManagerRules: [WindowManagerConfig.Rule] { windowManagerConfig?.rules ?? [] }
+    var windowManagerWorkspaceNames: [String] { windowManagerWorkspaces.map(\.name) }
+
+    // The window manager lines of the last load's problem list. Taken from
+    // the report the app already made (settings.lastReport) instead of
+    // checking again here, because checking again would write every
+    // warning to the log once more on each redraw. All of these warnings
+    // start with "windowManager" (see resolveWindowManager, Config.swift).
+    var windowManagerWarnings: [String] {
+        settings.lastReport.warnings.filter { $0.hasPrefix("windowManager") }
+    }
+
+    // How many rules send new windows to this workspace.
+    func ruleCount(for workspace: String) -> Int {
+        windowManagerRules.filter { $0.workspace == workspace }.count
+    }
+
+    // The one door every change in this tab goes through: takes the section
+    // out of the file (or starts an empty one if there is none yet), lets
+    // `change` edit it, and writes it back, all as one editConfigFile call
+    // that only touches "windowManager".
+    @discardableResult
+    private func changeWindowManager(_ description: String, _ change: @escaping (inout [String: Any]) -> Void) -> Bool {
+        edit(description, touching: [["windowManager"]]) { tree in
+            var section = tree["windowManager"] as? [String: Any] ?? [:]
+            change(&section)
+            tree["windowManager"] = section
+        }
+    }
+
+    // The section's "workspaces" or "rules" list as plain JSON entries.
+    // Every entry is a { } group, the file wouldn't have loaded otherwise.
+    private static func entries(_ key: String, in section: [String: Any]) -> [[String: Any]] {
+        (section[key] as? [Any] ?? []).compactMap { $0 as? [String: Any] }
+    }
+
+    // Remembers that `name` lost its workspace here while launcher tiles
+    // still use it, for the note under the list (shown only while that
+    // stays true, see WorkspacesTab).
+    private func noteLeftoverTiles(for names: [String]) {
+        for name in names where !tiles(in: name).isEmpty && !namesWithLeftoverTiles.contains(name) {
+            namesWithLeftoverTiles.append(name)
+        }
+    }
+
+    // "Workspace 1", or the next number that isn't taken. You rename it
+    // straight after, the number only keeps the names different.
+    func addWindowManagerWorkspace() {
+        var number = windowManagerWorkspaces.count + 1
+        while windowManagerWorkspaceNames.contains("Workspace \(number)") { number += 1 }
+        let name = "Workspace \(number)"
+        changeWindowManager("add window manager workspace \(name)") { section in
+            var list = Self.entries("workspaces", in: section)
+            list.append(["name": name])
+            section["workspaces"] = list
+        }
+    }
+
+    // nil = fine. Otherwise why the new name can't be used, shown at the
+    // top of the window (the name field then puts the old name back).
+    func renameProblem(_ newName: String, at index: Int) -> String? {
+        let others = windowManagerWorkspaceNames.enumerated().filter { $0.offset != index }.map(\.element)
+        if others.contains(where: { $0.caseInsensitiveCompare(newName) == .orderedSame }) {
+            return "There's already a workspace called \(newName), so the old name was put back."
+        }
+        return nil
+    }
+
+    // Renames one workspace AND every rule that pointed at it, in the same
+    // save, so no rule is ever left pointing at a name that no longer exists.
+    func renameWindowManagerWorkspace(at index: Int, to newName: String) {
+        guard let oldName = windowManagerWorkspaceNames[safe: index], oldName != newName else { return }
+        let moved = ruleCount(for: oldName)
+        let saved = changeWindowManager("rename window manager workspace \(oldName) to \(newName) (and \(moved) rules)") { section in
+            var list = Self.entries("workspaces", in: section)
+            guard list.indices.contains(index) else { return }
+            list[index]["name"] = newName
+            section["workspaces"] = list
+            var rules = Self.entries("rules", in: section)
+            for i in rules.indices where rules[i]["workspace"] as? String == oldName {
+                rules[i]["workspace"] = newName
+            }
+            if section["rules"] != nil { section["rules"] = rules }
+        }
+        if saved { noteLeftoverTiles(for: [oldName]) }
+    }
+
+    // Removing a workspace that rules point at asks first, because those
+    // rules have to go too (a rule needs a workspace to send windows to).
+    func removeWindowManagerWorkspace(at index: Int) {
+        guard let name = windowManagerWorkspaceNames[safe: index] else { return }
+        let rules = ruleCount(for: name)
+        if rules > 0 {
+            let alert = NSAlert()
+            alert.messageText = "Remove \(name)?"
+            alert.informativeText = "\(rules) app rule\(rules == 1 ? "" : "s") send\(rules == 1 ? "s" : "") new windows to \(name). \(rules == 1 ? "It" : "They") will be removed too."
+            alert.addButton(withTitle: "Remove")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else {
+                logDebug("Settings: kept window manager workspace \(name)")
+                return
+            }
+        }
+        let saved = changeWindowManager("remove window manager workspace \(name) (and \(rules) rules)") { section in
+            var list = Self.entries("workspaces", in: section)
+            guard list.indices.contains(index) else { return }
+            list.remove(at: index)
+            section["workspaces"] = list
+            if section["rules"] != nil {
+                section["rules"] = Self.entries("rules", in: section).filter { $0["workspace"] as? String != name }
+            }
+        }
+        if saved { noteLeftoverTiles(for: [name]) }
+    }
+
+    // Moves a workspace (or rule) one place up (-1) or down (+1). The order
+    // of workspaces is the order they're shown in; the order of rules
+    // matters because the first rule that matches wins.
+    func moveWindowManagerEntry(_ key: String, at index: Int, by offset: Int) {
+        changeWindowManager("move windowManager.\(key)[\(index)] by \(offset)") { section in
+            var list = Self.entries(key, in: section)
+            let target = index + offset
+            guard list.indices.contains(index), list.indices.contains(target) else { return }
+            list.swapAt(index, target)
+            section[key] = list
+        }
+    }
+
+    // A new rule for an app picked in the Add Rule panel, sent to the first
+    // workspace. Starting from a picked app (instead of an empty row) means
+    // the file never holds a rule with no app text, which would only be a
+    // warning.
+    func addWindowManagerRule(app: String) {
+        guard let workspace = windowManagerWorkspaceNames.first else { return }
+        changeWindowManager("add window manager rule \(app) -> \(workspace)") { section in
+            var rules = Self.entries("rules", in: section)
+            rules.append(["app": app, "workspace": workspace])
+            section["rules"] = rules
+        }
+    }
+
+    // One field ("app" or "workspace") of one rule.
+    func setRuleField(_ field: String, to value: String, at index: Int) {
+        changeWindowManager("set windowManager.rules[\(index)].\(field) = \(value)") { section in
+            var rules = Self.entries("rules", in: section)
+            guard rules.indices.contains(index) else { return }
+            rules[index][field] = value
+            section["rules"] = rules
+        }
+    }
+
+    func removeWindowManagerRule(at index: Int) {
+        let app = windowManagerRules[safe: index]?.app ?? "?"
+        changeWindowManager("remove window manager rule \(app)") { section in
+            var rules = Self.entries("rules", in: section)
+            guard rules.indices.contains(index) else { return }
+            rules.remove(at: index)
+            section["rules"] = rules
+        }
+    }
+
+    func setMaximizeNewWindows(_ on: Bool) {
+        changeWindowManager("set windowManager.maximizeNewWindows = \(on)") { $0["maximizeNewWindows"] = on }
+    }
+
+    // The key a target has in the file now (nil = none).
+    func windowManagerKey(for target: WindowManagerKeyTarget) -> String? {
+        let key: String?
+        switch target {
+        case .toggleMaximize: key = windowManagerConfig?.toggleMaximizeKey
+        case .workspace(let name): key = windowManagerWorkspaces.first { $0.name == name }?.key
+        }
+        return (key?.isEmpty ?? true) ? nil : key
+    }
+
+    // Writes one target's key into a section (nil removes it). Shared by
+    // "set a key" and "move a key from one target to another", so both
+    // happen in a single save.
+    private static func putKey(_ key: String?, for target: WindowManagerKeyTarget, in section: inout [String: Any]) {
+        switch target {
+        case .toggleMaximize:
+            section["toggleMaximizeKey"] = key
+        case .workspace(let name):
+            var list = entries("workspaces", in: section)
+            guard let i = list.firstIndex(where: { $0["name"] as? String == name }) else { return }
+            list[i]["key"] = key
+            section["workspaces"] = list
+        }
+    }
+
+    func clearWindowManagerKey(for target: WindowManagerKeyTarget) {
+        changeWindowManager("remove the key of \(target.logName)") { Self.putKey(nil, for: target, in: &$0) }
+    }
+
+    // Recording works like the Keys tab (a local monitor that only hears
+    // keys typed into this window, removed after one key), but only letters
+    // and digits are accepted: these keys are used with Option, and Option
+    // with an arrow, Delete or Return already means something while typing
+    // in almost every app (Option+Delete deletes a whole word), so taking
+    // those over would get in the way.
+    func startRecordingWindowManagerKey(_ target: WindowManagerKeyTarget) {
+        stopRecording()
+        recordingWindowManagerKey = target
+        notice = nil
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            MainActor.assumeIsolated { self?.recordedWindowManagerKey(event) }
+            return nil
+        }
+        logDebug("Settings: recording a key for \(target.logName)")
+    }
+
+    private func recordedWindowManagerKey(_ event: NSEvent) {
+        guard let target = recordingWindowManagerKey else {
+            stopRecording()
+            return
+        }
+        stopRecording()
+        let code = Int64(event.keyCode)
+        logDebug("Settings: key pressed while recording \(target.logName): code \(code)")
+        if code == 53 { return }  // Escape: just stop recording, nothing changes
+        guard let name = keyName(forCode: code), name.count == 1 else {
+            notice = "Pick a letter or a digit. Option with arrows, Delete, Return or Space already does things while you type, so those aren't offered here."
+            NSSound.beep()
+            return
+        }
+        // Who has this key now, if anyone else: another workspace, or the
+        // maximize toggle. Compared by key code, so "Q" and "q" are the same.
+        var holders: [WindowManagerKeyTarget] = windowManagerWorkspaces.map { .workspace($0.name) }
+        holders.append(.toggleMaximize)
+        let other = holders.first { holder in
+            holder != target && windowManagerKey(for: holder).flatMap { keyCode(forName: $0) } == code
+        }
+        if let other {
+            // Keys here are optional, so the friendly fix is to MOVE the key
+            // (the other one is left without), not to swap like the Keys tab.
+            let alert = NSAlert()
+            alert.messageText = "Option + \(keyDisplayName(name)) is already used for \(other.title)"
+            alert.informativeText = "Use it for \(target.title) instead? \(other.title) will have no key."
+            alert.addButton(withTitle: "Use It Here")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            changeWindowManager("move key \(name) from \(other.logName) to \(target.logName)") { section in
+                Self.putKey(nil, for: other, in: &section)
+                Self.putKey(name, for: target, in: &section)
+            }
+        } else {
+            changeWindowManager("set the key of \(target.logName) = \(name)") { Self.putKey(name, for: target, in: &$0) }
+        }
+    }
+
+    // Import from AeroSpace's .aerospace.toml (only read, never changed).
+    // Asks first with the counts, then replaces the workspaces, rules and
+    // maximize settings in ONE save. Keys in the section that AeroSwitcher
+    // doesn't know are kept, the same as every other change here.
+    func importFromAeroSpace() {
+        guard let path = aeroSpaceConfigFilePath() else { return }
+        guard let imported = windowManagerSectionFromAeroSpaceConfig(atPath: path) else {
+            showFailureAlert("Couldn't import AeroSpace's config",
+                             "No workspaces were found in \(path), so nothing was changed. Check that the file has a persistent-workspaces line or alt- workspace keys. Details are in the log: \(logFileURL().path)")
+            return
+        }
+        let workspaces = (imported["workspaces"] as? [Any])?.count ?? 0
+        let rules = (imported["rules"] as? [Any])?.count ?? 0
+        let alert = NSAlert()
+        alert.messageText = "Import from AeroSpace's config?"
+        let counts = "\(workspaces) workspace\(workspaces == 1 ? "" : "s"), \(rules) rule\(rules == 1 ? "" : "s")."
+        let replaces = windowManagerConfig == nil ? "" : " This replaces what's in this tab."
+        alert.informativeText = counts + replaces + " AeroSpace's file is only read."
+        alert.addButton(withTitle: windowManagerConfig == nil ? "Import" : "Replace")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            logDebug("Settings: import from AeroSpace's config cancelled")
+            return
+        }
+        let oldNames = windowManagerWorkspaceNames
+        let newNames = (imported["workspaces"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String }
+        let saved = changeWindowManager("import \(workspaces) workspaces and \(rules) rules from \(path)") { section in
+            for key in windowManagerKeyOrder { section[key] = nil }
+            for (key, value) in imported { section[key] = value }
+        }
+        if saved { noteLeftoverTiles(for: oldNames.filter { !newNames.contains($0) }) }
     }
 
     // MARK: Icons
@@ -473,6 +808,30 @@ extension Array {
     subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
 }
 
+// The things in the Workspaces tab that can have an Option+key: a workspace
+// (by name, so the right row is still meant if the list changes while you
+// record) or the maximize toggle.
+enum WindowManagerKeyTarget: Equatable {
+    case workspace(String)
+    case toggleMaximize
+
+    // How it's named in the window ("Core", "the maximize toggle").
+    var title: String {
+        switch self {
+        case .workspace(let name): return name
+        case .toggleMaximize: return "the maximize toggle"
+        }
+    }
+
+    // How it's named in the log.
+    var logName: String {
+        switch self {
+        case .workspace(let name): return "window manager workspace \(name)"
+        case .toggleMaximize: return "windowManager.toggleMaximizeKey"
+        }
+    }
+}
+
 // MARK: The window
 
 @MainActor
@@ -567,6 +926,7 @@ struct SettingsView: View {
                     LauncherTab(model: model).tabItem { Text("Launcher tiles") }
                     KeysTab(model: model).tabItem { Text("Keys") }
                     IconsTab(model: model).tabItem { Text("Icons") }
+                    WorkspacesTab(model: model).tabItem { Text("Workspaces") }
                 }
                 .padding(12)
             }
@@ -685,7 +1045,11 @@ struct LauncherTab: View {
             if let workspace = model.selectedWorkspace {
                 WorkspaceTilesView(model: model, workspace: workspace).id(workspace)
             } else {
-                Text(model.aerospaceWorkspaces.isEmpty ? "Asking AeroSpace for its workspaces..." : "Pick a workspace")
+                // In own window manager mode nobody is asked, the list is
+                // just empty until workspaces are added in the Workspaces tab.
+                Text(model.aerospaceWorkspaces.isEmpty
+                     ? (ownWindowManager ? "No workspaces yet. Add them in the Workspaces tab." : "Asking AeroSpace for its workspaces...")
+                     : "Pick a workspace")
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -706,7 +1070,9 @@ struct WorkspaceTilesView: View {
                 .font(.caption).foregroundStyle(.secondary)
             if !model.aerospaceWorkspaces.isEmpty && !model.aerospaceWorkspaces.contains(workspace) {
                 HStack {
-                    Text("AeroSpace has no workspace called \(workspace), so these tiles never show.")
+                    Text(ownWindowManager
+                         ? "The Workspaces tab has no workspace called \(workspace), so these tiles never show."
+                         : "AeroSpace has no workspace called \(workspace), so these tiles never show.")
                         .foregroundStyle(.orange)
                     Spacer()
                     Button("Remove \(workspace)") { model.removeWorkspace(workspace) }
@@ -829,6 +1195,14 @@ struct CommitTextField: View {
     let label: String
     let value: String
     var required = false
+    // false = no label in front of the field (the label is then only the
+    // grey placeholder text inside it), for rows that sit under a heading,
+    // like the app rules in the Workspaces tab.
+    var showsLabel = true
+    // An extra check before saving: returns why the new text can't be used
+    // (shown through onRefused, and the old text is put back), or nil if
+    // it's fine. Used to refuse a workspace name that's already taken.
+    var problem: ((String) -> String?)? = nil
     // Called with a message when an empty value was refused.
     var onRefused: ((String) -> Void)? = nil
     let commit: (String) -> Void
@@ -837,7 +1211,9 @@ struct CommitTextField: View {
 
     var body: some View {
         HStack {
-            Text(label).frame(width: 50, alignment: .leading)
+            if showsLabel {
+                Text(label).frame(width: 50, alignment: .leading)
+            }
             field
         }
     }
@@ -864,6 +1240,12 @@ struct CommitTextField: View {
             text = value  // can't be empty, put the old value back
             NSSound.beep()
             onRefused?("\(label) can't be empty, so the old value was put back.")
+            return
+        }
+        if trimmed != value, let why = problem?(trimmed) {
+            text = value
+            NSSound.beep()
+            onRefused?(why)
             return
         }
         if trimmed != value { commit(trimmed) }
@@ -1141,5 +1523,258 @@ struct IconFolderImportView: View {
 
     private func currentIcon(_ row: SettingsModel.IconRow) -> NSImage {
         row.customPath.flatMap { NSImage(contentsOfFile: ($0 as NSString).expandingTildeInPath) } ?? row.appIcon
+    }
+}
+
+// The Workspaces tab: AeroSwitcher's own window manager settings, the
+// "windowManager" section of config.json. Every button and field here saves
+// at once through the model's changeWindowManager (text fields when you
+// press Return or click elsewhere), like the other tabs. The wording of
+// everything you see is in this struct; the rules about what may be saved
+// are in the model (MARK: Workspaces).
+struct WorkspacesTab: View {
+    @ObservedObject var model: SettingsModel
+
+    var body: some View {
+        // Looked up on each redraw (two "does this file exist" checks, cheap),
+        // so the Import button appears as soon as the file does.
+        let aeroSpaceConfig = aeroSpaceConfigFilePath()
+        Form {
+            Section {
+                Text(ownWindowManager
+                     ? "AeroSwitcher manages your windows with these workspaces and rules."
+                     : "These are used when AeroSwitcher manages windows itself (switch in the Setup window). Until then AeroSpace's own config is used.")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if model.windowManagerConfig == nil {
+                emptyState(aeroSpaceConfig: aeroSpaceConfig)
+            } else {
+                workspacesSection
+                rulesSection
+                maximizeSection
+                if !model.windowManagerWarnings.isEmpty {
+                    Section("Problems") {
+                        ForEach(model.windowManagerWarnings, id: \.self) { Text($0).foregroundStyle(.orange) }
+                    }
+                }
+                if let aeroSpaceConfig {
+                    Section("AeroSpace") {
+                        importButton
+                        Text("Reads \((aeroSpaceConfig as NSString).abbreviatingWithTildeInPath) and replaces everything in this tab with what's in it. AeroSpace's file is never changed.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    // config.json has no "windowManager" section at all yet.
+    private func emptyState(aeroSpaceConfig: String?) -> some View {
+        Section {
+            Text("No workspaces yet").font(.headline)
+            Text(aeroSpaceConfig == nil
+                 ? "Add your first workspace to start."
+                 : "Add your first workspace, or bring in the workspaces and rules from AeroSpace's config.")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Button("Add Workspace") { model.addWindowManagerWorkspace() }
+                if aeroSpaceConfig != nil { importButton }
+            }
+        }
+    }
+
+    private var importButton: some View {
+        Button("Import from AeroSpace's Config...") { model.importFromAeroSpace() }
+    }
+
+    private var workspacesSection: some View {
+        let workspaces = model.windowManagerWorkspaces
+        // Renamed or removed workspaces whose launcher tiles are still in
+        // config.json under the old name (and no workspace has that name
+        // again), see noteLeftoverTiles in the model.
+        let leftovers = model.namesWithLeftoverTiles.filter {
+            !model.tiles(in: $0).isEmpty && !model.windowManagerWorkspaceNames.contains($0)
+        }
+        return Section {
+            ForEach(Array(workspaces.enumerated()), id: \.offset) { index, workspace in
+                HStack {
+                    CommitTextField(label: "Name", value: workspace.name, required: true,
+                                    problem: { model.renameProblem($0, at: index) },
+                                    onRefused: { model.notice = $0 }) {
+                        model.renameWindowManagerWorkspace(at: index, to: $0)
+                    }
+                    .frame(maxWidth: 260)
+                    Spacer()
+                    WindowManagerKeyControl(model: model, target: .workspace(workspace.name))
+                    moveButtons("workspaces", index: index, count: workspaces.count, name: workspace.name)
+                    removeButton(name: workspace.name) { model.removeWindowManagerWorkspace(at: index) }
+                }
+            }
+            if workspaces.isEmpty {
+                Text("No workspaces yet.").foregroundStyle(.secondary)
+            }
+            HStack {
+                Button("Add Workspace") { model.addWindowManagerWorkspace() }
+                Spacer()
+            }
+        } header: {
+            Text("Workspaces")
+        } footer: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Shown in this order. Option + key goes to that workspace, Option + Shift + key moves the focused window there.")
+                    .font(.caption).foregroundStyle(.secondary)
+                ForEach(leftovers, id: \.self) { name in
+                    Text("\(name) still has launcher tiles in the Launcher tiles tab.")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+            }
+        }
+    }
+
+    private var rulesSection: some View {
+        let rules = model.windowManagerRules
+        let names = model.windowManagerWorkspaceNames
+        return Section {
+            if !rules.isEmpty {
+                HStack {
+                    Text("App path contains").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Text("Workspace").font(.caption).foregroundStyle(.secondary)
+                    // Room for the arrows and the remove button below.
+                    Spacer().frame(width: 72)
+                }
+            }
+            ForEach(Array(rules.enumerated()), id: \.offset) { index, rule in
+                HStack {
+                    CommitTextField(label: "App path contains", value: rule.app, required: true, showsLabel: false,
+                                    onRefused: { model.notice = $0 }) {
+                        model.setRuleField("app", to: $0, at: index)
+                    }
+                    Spacer()
+                    Picker("Workspace", selection: Binding(
+                        get: { rule.workspace },
+                        set: { if $0 != rule.workspace { model.setRuleField("workspace", to: $0, at: index) } })) {
+                        ForEach(names, id: \.self) { Text($0).tag($0) }
+                        // A rule edited by hand to a workspace that doesn't
+                        // exist still needs an entry, or the picker would
+                        // show nothing. The Problems list says why.
+                        if !names.contains(rule.workspace) {
+                            Text("\(rule.workspace) (missing)").tag(rule.workspace)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 150)
+                    moveButtons("rules", index: index, count: rules.count, name: rule.app)
+                    removeButton(name: rule.app) { model.removeWindowManagerRule(at: index) }
+                }
+            }
+            if rules.isEmpty {
+                Text("No rules yet.").foregroundStyle(.secondary)
+            }
+            HStack {
+                Button("Add Rule...") { chooseAppForRule() }
+                    .disabled(names.isEmpty)
+                    .help(names.isEmpty ? "Add a workspace first" : "Pick an app, its new windows will go to a workspace")
+                Spacer()
+            }
+        } header: {
+            Text("App rules")
+        } footer: {
+            Text("A new window goes to the first rule that matches where its app is on disk (for example Google Chrome.app). No match: it stays in the workspace you are in.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private var maximizeSection: some View {
+        Section("Maximize") {
+            Toggle("Make every new window fill the screen", isOn: Binding(
+                get: { model.windowManagerConfig?.maximizeNewWindows ?? true },
+                set: { model.setMaximizeNewWindows($0) }))
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Toggle full screen")
+                    Text("Flips the focused window between filling the screen and a centered smaller size.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                WindowManagerKeyControl(model: model, target: .toggleMaximize)
+            }
+        }
+    }
+
+    // Up and down arrows for one row of a list.
+    private func moveButtons(_ list: String, index: Int, count: Int, name: String) -> some View {
+        HStack(spacing: 2) {
+            Button {
+                model.moveWindowManagerEntry(list, at: index, by: -1)
+            } label: {
+                Image(systemName: "chevron.up")
+            }
+            .disabled(index == 0)
+            .help("Move up")
+            .accessibilityLabel("Move \(name) up")
+            Button {
+                model.moveWindowManagerEntry(list, at: index, by: 1)
+            } label: {
+                Image(systemName: "chevron.down")
+            }
+            .disabled(index >= count - 1)
+            .help("Move down")
+            .accessibilityLabel("Move \(name) down")
+        }
+        .buttonStyle(.borderless)
+    }
+
+    private func removeButton(name: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: "minus.circle")
+        }
+        .buttonStyle(.borderless)
+        .help("Remove")
+        .accessibilityLabel("Remove \(name)")
+    }
+
+    // "Add Rule...": pick the app, and the rule's text becomes the app's
+    // file name ("Google Chrome.app"). That's the part of its place on disk
+    // that's the same on every Mac. You can edit the text afterwards, for
+    // example to match every app in a folder.
+    private func chooseAppForRule() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.application]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.prompt = "Add Rule"
+        panel.message = "Pick the app whose new windows should go to a workspace. You can change the workspace afterwards."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        model.addWindowManagerRule(app: url.lastPathComponent)
+    }
+}
+
+// The key of one workspace or of the maximize toggle: shown as
+// "Option + Q", with Record (press the key) and None (no key).
+struct WindowManagerKeyControl: View {
+    @ObservedObject var model: SettingsModel
+    let target: WindowManagerKeyTarget
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if model.recordingWindowManagerKey == target {
+                Text("Press a letter or digit...").foregroundStyle(Color.accentColor)
+                Button("Cancel") { model.stopRecording() }
+            } else {
+                let key = model.windowManagerKey(for: target)
+                Text(key.map { "Option + \(keyDisplayName($0))" } ?? "No key")
+                    .font(.body.monospaced())
+                    .foregroundStyle(key == nil ? .secondary : .primary)
+                    .frame(minWidth: 100)
+                    .padding(.vertical, 2)
+                    .background(Color.primary.opacity(0.07))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                Button("Record") { model.startRecordingWindowManagerKey(target) }
+                Button("None") { model.clearWindowManagerKey(for: target) }
+                    .disabled(key == nil)
+            }
+        }
     }
 }

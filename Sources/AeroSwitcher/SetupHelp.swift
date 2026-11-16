@@ -25,6 +25,13 @@ import SwiftUI
 //     NOT checked, it belongs to another app and can't be read. The window
 //     only mentions it.
 //
+// With AeroSwitcher's own window manager (Phase 14, `ownWindowManager`)
+// AeroSpace isn't needed, so none of its rows are shown and nothing asks it
+// anything. Instead there is a "Window manager" row (is it managing, or
+// paused and why), and Accessibility is needed for windows as well as for
+// Cmd+Tab. At the bottom of the window, in both modes, is the switch between
+// AeroSpace and AeroSwitcher's own window manager (modeSection, below).
+//
 // NEVER used here: CGRequestListenEventAccess, CGRequestScreenCaptureAccess,
 // AXIsProcessTrustedWithOptions with the prompt option, or any screen capture.
 // Those pop up macOS permission dialogs. Everything here only looks.
@@ -48,7 +55,7 @@ enum RecencyHookState: Equatable {
 }
 
 enum RequiredItem: Equatable {
-    case aerospaceInstalled, aerospaceRunning, inputMonitoring, screenRecording
+    case aerospaceInstalled, aerospaceRunning, inputMonitoring, screenRecording, windowManager
 }
 
 // The line that makes AeroSpace write down which window you focused. Same
@@ -72,6 +79,9 @@ struct SetupStatus: Equatable {
     var screenRecording = false
     var hook: RecencyHookState = .notChecked
     var configPath: String?
+    // Own window manager only: why it is paused, nil while it manages.
+    var ownMode = false
+    var managerPausedReason: String?
 
     var inputMonitoringOK: Bool { inputPreflight && tapRunning }
 
@@ -88,6 +98,12 @@ struct SetupStatus: Equatable {
     // What stops AeroSwitcher from working at all. Decides the launch popup.
     var requiredMissing: [RequiredItem] {
         var items: [RequiredItem] = []
+        if ownMode {
+            if managerPausedReason != nil { items.append(.windowManager) }
+            if !inputMonitoringOK { items.append(.inputMonitoring) }
+            if !screenRecording { items.append(.screenRecording) }
+            return items
+        }
         if cliPath == nil { items.append(.aerospaceInstalled) }
         else if aerospace == .notRunning { items.append(.aerospaceRunning) }
         if !inputMonitoringOK { items.append(.inputMonitoring) }
@@ -97,6 +113,7 @@ struct SetupStatus: Equatable {
 
     // Things worth a yellow mark but not worth a launch popup.
     var hasWarnings: Bool {
+        if ownMode { return false }
         if needsRestartForCLI { return true }
         if case .disabled = aerospace { return true }
         if case .unknown = aerospace { return true }
@@ -106,7 +123,10 @@ struct SetupStatus: Equatable {
     }
 
     var summary: String {
-        "installed=\(cliPath != nil) aerospace=\(aerospace) inputPreflight=\(inputPreflight) accessibility=\(accessibilityTrusted) tap=\(tapRunning) screenRecording=\(screenRecording) hook=\(hook) subscribe=\(subscribeSupported)"
+        if ownMode {
+            return "own window manager, paused=\(managerPausedReason ?? "no") inputPreflight=\(inputPreflight) accessibility=\(accessibilityTrusted) tap=\(tapRunning) screenRecording=\(screenRecording)"
+        }
+        return "installed=\(cliPath != nil) aerospace=\(aerospace) inputPreflight=\(inputPreflight) accessibility=\(accessibilityTrusted) tap=\(tapRunning) screenRecording=\(screenRecording) hook=\(hook) subscribe=\(subscribeSupported)"
     }
 }
 
@@ -119,6 +139,12 @@ func computeSetupStatus(tapRunning: Bool) -> SetupStatus {
     status.accessibilityTrusted = AXIsProcessTrusted()
     status.tapRunning = tapRunning
     status.screenRecording = CGPreflightScreenCaptureAccess()
+    if ownWindowManager {
+        // Nothing about AeroSpace is asked: it isn't used in this mode.
+        status.ownMode = true
+        status.managerPausedReason = WorkspaceManager.shared.pausedReason
+        return status
+    }
     status.appInstalled = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "bobko.aerospace") != nil
     status.cliPath = findAerospaceCLI()
     guard status.cliPath != nil else {
@@ -294,6 +320,7 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
         status.accessibilityTrusted = AXIsProcessTrusted()
         status.tapRunning = hotkeys?.isRunning ?? false
         status.screenRecording = CGPreflightScreenCaptureAccess()
+        if status.ownMode { status.managerPausedReason = WorkspaceManager.shared.pausedReason }
         return status
     }
 
@@ -310,7 +337,10 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
 
     private func check(attemptsLeft: Int) {
         refresh { [self] status in
+            // AeroSpace still starting at login, or the own window manager
+            // still taking its first look: give both a few seconds.
             let waitingOnAeroSpace = status.requiredMissing == [.aerospaceRunning]
+                || status.managerPausedReason == "Starting"
             if waitingOnAeroSpace && attemptsLeft > 0 {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.check(attemptsLeft: attemptsLeft - 1) }
                 return
@@ -378,7 +408,25 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
         var rows: [SetupRow] = []
         let restartButton = SetupButton(title: "Restart AeroSwitcher") { [weak self] in self?.restart() }
         let removeAndAdd = "Already switched on but still marked? Select it, remove it with the minus button, then add it again with the plus."
+        let accessibilityTitle = s.ownMode ? "Accessibility (Cmd+Tab and windows)" : "Accessibility (Cmd+Tab)"
 
+        if s.ownMode {
+            // The window manager's own row first: it is what everything
+            // else is for in this mode.
+            if let reason = s.managerPausedReason {
+                var buttons: [SetupButton] = []
+                if reason.hasPrefix("No workspaces") {
+                    buttons.append(SetupButton(title: "Open Settings") { SettingsWindow.shared.show() })
+                }
+                rows.append(SetupRow(id: "manager", mark: reason == "Starting" ? .idle : .bad, title: "Window manager",
+                    detail: reason == "Starting" ? "Taking its first look at your windows." : "Paused: \(reason). Your windows are all on screen until this is fixed.",
+                    buttons: buttons))
+            } else {
+                let names = windowManagerSettings.workspaceNames
+                rows.append(SetupRow(id: "manager", mark: .good, title: "Window manager",
+                    detail: "Managing \(names.count) workspaces: \(names.joined(separator: ", ")). AeroSpace isn't used."))
+            }
+        } else {
         // 1. AeroSpace installed
         if let path = s.cliPath {
             if s.needsRestartForCLI {
@@ -451,15 +499,16 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
             rows.append(SetupRow(id: "running", mark: .warning, title: "AeroSpace running",
                 detail: "Unexpected answer: \(message)"))
         }
+        }
 
         // 3. Cmd+Tab (Accessibility). The row id stays "input" because the
         // opened/returned bookkeeping uses it. Accessibility is the page that
         // matters for the hook, Input Monitoring stays as a second button
         // because it can't be ruled out for every Mac.
         if s.inputMonitoringOK {
-            rows.append(SetupRow(id: "input", mark: .good, title: "Accessibility (Cmd+Tab)", detail: "Cmd+Tab is handled by AeroSwitcher."))
+            rows.append(SetupRow(id: "input", mark: .good, title: accessibilityTitle, detail: s.ownMode ? "Cmd+Tab and your windows are handled by AeroSwitcher." : "Cmd+Tab is handled by AeroSwitcher."))
         } else if s.accessibilityTrusted || s.inputPreflight {
-            rows.append(SetupRow(id: "input", mark: .warning, title: "Accessibility (Cmd+Tab)",
+            rows.append(SetupRow(id: "input", mark: .warning, title: accessibilityTitle,
                 detail: "Allowed, but the Cmd+Tab hook hasn't started. Restart AeroSwitcher.",
                 buttons: [restartButton]))
         } else {
@@ -472,8 +521,8 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
                 hint = "Still marked after switching it on? Restart AeroSwitcher. If it still fails, look at Input Monitoring too."
                 buttons.append(restartButton)
             }
-            rows.append(SetupRow(id: "input", mark: .bad, title: "Accessibility (Cmd+Tab)",
-                detail: "Required for Cmd+Tab. Switch AeroSwitcher on in the Accessibility list, or add it with the plus button.",
+            rows.append(SetupRow(id: "input", mark: .bad, title: accessibilityTitle,
+                detail: (s.ownMode ? "Required for Cmd+Tab and for managing windows." : "Required for Cmd+Tab.") + " Switch AeroSwitcher on in the Accessibility list, or add it with the plus button.",
                 hint: hint, buttons: buttons))
         }
 
@@ -491,6 +540,9 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
                 detail: "Required for window previews. Without it they appear blank.",
                 hint: hint, buttons: buttons))
         }
+
+        // The rest is about AeroSpace only.
+        if s.ownMode { return rows }
 
         // 5. Recent order
         let openConfig = SetupButton(title: "Open config") { [weak self] in
@@ -559,6 +611,86 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
         logInfo("Setup: copied to the clipboard")
     }
 
+    // MARK: Switching window manager (Phase 14)
+
+    // "Use AeroSwitcher's Own Window Manager...". Quits AeroSpace (which
+    // puts every window back on screen when it quits), keeps its idea of
+    // which window is in which workspace, and restarts AeroSwitcher in the
+    // new mode. Nothing in AeroSpace's config file is changed, so going back
+    // is always possible.
+    func switchToOwnWindowManager() {
+        let rules = windowManagerSettings
+        guard !rules.workspaces.isEmpty else {
+            showFailureAlert("Set up workspaces first",
+                "AeroSwitcher's window manager has no workspaces yet. Open Settings > Workspaces and add them, or use Import from AeroSpace's Config there, then try again.")
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "Use AeroSwitcher's own window manager?"
+        alert.informativeText = "AeroSwitcher will show and hide windows itself, with \(rules.workspaces.count) workspaces (\(rules.workspaceNames.joined(separator: ", "))) and \(rules.rules.count) app rules from Settings > Workspaces.\n\n"
+            + "AeroSpace must not run at the same time, so it will be quit now. Remove AeroSpace from System Settings > General > Login Items yourself, or it starts again at login (AeroSwitcher then pauses and tells you).\n\n"
+            + "Your AeroSpace config file is not changed. You can go back to AeroSpace from this window at any time. If a window ever goes missing, use Bring Back All Windows in AeroSwitcher's menu."
+        alert.addButton(withTitle: "Quit AeroSpace and Switch")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            logInfo("Setup: switch to own window manager cancelled")
+            return
+        }
+        logInfo("Setup: switching to AeroSwitcher's own window manager")
+        Task.detached {
+            // AeroSpace's last word on where every window is, while it still
+            // runs. Empty if it doesn't answer; the rules decide then.
+            let answer = getWindowsWithFocus()
+            let running = NSRunningApplication.runningApplications(withBundleIdentifier: aeroSpaceBundleId)
+            for app in running { app.terminate() }
+            var waited = 0.0
+            while waited < 5, !NSRunningApplication.runningApplications(withBundleIdentifier: aeroSpaceBundleId).isEmpty {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                waited += 0.2
+            }
+            let stillRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: aeroSpaceBundleId).isEmpty
+            let wasRunning = !running.isEmpty
+            await MainActor.run {
+                if stillRunning {
+                    logWarn("Setup: AeroSpace didn't quit within 5 seconds, not switching")
+                    showFailureAlert("AeroSpace didn't quit",
+                        "AeroSwitcher asked AeroSpace to quit, but it is still running after 5 seconds, so nothing was switched. Quit AeroSpace from its own menu, then try again.")
+                    return
+                }
+                logInfo("Setup: AeroSpace quit\(wasRunning ? "" : " (it wasn't running)")")
+                if let answer {
+                    WorkspaceManager.seedFromAeroSpace(windows: answer.windows, focusedWorkspace: answer.focusedWorkspace)
+                }
+                WorkspaceManager.setOwnMode(true)
+                self.restart()
+            }
+        }
+    }
+
+    // "Go Back to AeroSpace...". Puts every window on screen, switches the
+    // mode back and restarts AeroSwitcher, starting AeroSpace in between
+    // (after AeroSwitcher has quit, so they never both manage windows).
+    func switchBackToAeroSpace() {
+        let installed = NSWorkspace.shared.urlForApplication(withBundleIdentifier: aeroSpaceBundleId) != nil
+        let alert = NSAlert()
+        alert.messageText = "Go back to AeroSpace?"
+        alert.informativeText = installed
+            ? "Every window comes back on screen, AeroSwitcher restarts and AeroSpace is started again with its own config. Add AeroSpace back to System Settings > General > Login Items if you removed it."
+            : "AeroSpace doesn't seem to be installed, so after this nothing will manage your windows until you install it (Setup shows how). Every window comes back on screen and AeroSwitcher restarts."
+        alert.addButton(withTitle: "Go Back to AeroSpace")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            logInfo("Setup: go back to AeroSpace cancelled")
+            return
+        }
+        logInfo("Setup: going back to AeroSpace")
+        WorkspaceManager.shared.putAllWindowsOnScreen()
+        WorkspaceManager.setOwnMode(false)
+        restart(openFirst: installed ? aeroSpaceBundleId : nil)
+    }
+
     // MARK: Restart
 
     // A small helper waits for this process to end and then starts the app
@@ -566,7 +698,7 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
     // bring the old one to the front). Passes the test variables along so a
     // test copy restarts as a test copy. Retries a few times because `open`
     // once failed right after a quit (error -600, Phase 8).
-    func restart() {
+    func restart(openFirst bundleId: String? = nil) {
         let path = Bundle.main.bundlePath
         let pid = ProcessInfo.processInfo.processIdentifier
         func quote(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }
@@ -574,7 +706,12 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
         for key in ["AEROSWITCHER_CONFIG_DIR", "AEROSWITCHER_AEROSPACE_PATH"] {
             if let value = ProcessInfo.processInfo.environment[key] { envArguments += " --env " + quote("\(key)=\(value)") }
         }
-        let script = "while kill -0 \(pid) 2>/dev/null; do sleep 0.2; done; for i in 1 2 3 4 5; do /usr/bin/open -n\(envArguments) \(quote(path)) && exit 0; sleep 1; done"
+        // `openFirst`: another app to start once this one has quit and
+        // before it starts again (AeroSpace, when going back to it; started
+        // while AeroSwitcher was still managing windows, the two would
+        // fight for a moment).
+        let first = bundleId.map { "/usr/bin/open -b \(quote($0)); sleep 2; " } ?? ""
+        let script = "while kill -0 \(pid) 2>/dev/null; do sleep 0.2; done; \(first)for i in 1 2 3 4 5; do /usr/bin/open -n\(envArguments) \(quote(path)) && exit 0; sleep 1; done"
         let helper = Process()
         helper.executableURL = URL(fileURLWithPath: "/bin/sh")
         helper.arguments = ["-c", script]
@@ -605,6 +742,9 @@ struct SetupView: View {
                             Color.clear.frame(height: 0).id("top")
                             ForEach(help.rows(for: status)) { SetupRowView(row: $0) }
                             accessibilityNote
+                            // Last, so the buttons above keep their places
+                            // (tests click SwiftUI buttons by position).
+                            modeSection
                         }
                         .padding(.horizontal, 20)
                         .padding(.bottom, 16)
@@ -646,10 +786,33 @@ struct SetupView: View {
     private var accessibilityNote: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Accessibility").font(.headline)
-            Text("AeroSwitcher needs it for Cmd+Tab (checked above). AeroSpace needs it too, to move windows, and AeroSwitcher can't check that one. If windows aren't being managed, look here.")
+            Text(ownWindowManager
+                ? "AeroSwitcher needs it for Cmd+Tab and to move windows between workspaces (checked above)."
+                : "AeroSwitcher needs it for Cmd+Tab (checked above). AeroSpace needs it too, to move windows, and AeroSwitcher can't check that one. If windows aren't being managed, look here.")
                 .font(.callout).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Button("Open Accessibility") { help.openAccessibilitySettings() }.accessibilityLabel("Open Accessibility")
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(0.05))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    // Which app manages the workspaces, and the button to switch.
+    private var modeSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Window manager").font(.headline)
+            Text(ownWindowManager
+                ? "AeroSwitcher manages your workspaces itself. AeroSpace isn't used."
+                : "AeroSpace (a separate app) manages your workspaces. AeroSwitcher can do it itself instead, with the workspaces and app rules in Settings > Workspaces.")
+                .font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if ownWindowManager {
+                Button("Go Back to AeroSpace...") { help.switchBackToAeroSpace() }.accessibilityLabel("Go Back to AeroSpace")
+            } else {
+                Button("Use AeroSwitcher's Own Window Manager...") { help.switchToOwnWindowManager() }.accessibilityLabel("Use AeroSwitcher's Own Window Manager")
+            }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)

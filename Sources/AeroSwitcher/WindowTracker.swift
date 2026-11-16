@@ -10,6 +10,14 @@ import AppKit
 // here moves, resizes, hides or focuses a window. Later steps build on it:
 // B2 sorts these windows into workspaces, B6 makes Cmd+Tab read from it.
 //
+// Since B2 to B6 the tracker also feeds AeroSwitcher's own window manager
+// (WorkspaceManager.swift): each window now carries its position and size,
+// its title (kept in memory for the Cmd+Tab card, never logged) and whether
+// it is in macOS full screen; the tracker says which window has the keyboard
+// focus; and `onRefresh` tells the manager "the list was just updated". The
+// tracker itself still never moves anything. The manager does, by handing a
+// small job to the window's own app thread (`act`, below).
+//
 // How it stays up to date (AeroSpace's way, see below for where it's from):
 // it does NOT try to follow every change one by one from the notifications.
 // Any hint that something might have changed starts a "refresh", which asks
@@ -67,6 +75,18 @@ struct TrackedWindow {
     let subrole: String
     let minimized: Bool
     let appHidden: Bool
+    // Added for the window manager (B2 to B6). `frame` is where the window
+    // is and how big, in the coordinates Accessibility uses: x and y count
+    // from the TOP left corner of the main screen. nil if the app didn't say.
+    var frame: CGRect? = nil
+    // The window is in macOS's own full screen (its own Space, green button).
+    var fullscreen: Bool = false
+    // Where the app lives on disk (for an app without a bundle, its program
+    // file). The sorting rules match on this, like AeroSpace's
+    // %{app-bundle-path}.
+    var appPath: String? = nil
+    // Only for the Cmd+Tab card ("Finder - Downloads"). Never logged.
+    var title: String = ""
 
     // AeroSpace's `list-windows` leaves out popups and minimized windows
     // (they sit outside every workspace in AeroSpace), but includes windows
@@ -91,6 +111,16 @@ private struct RefreshContext {
     let mouseDown: Bool
     let appHidden: Bool
     let activationPolicy: NSApplication.ActivationPolicy
+    // This app is the one in front, so its focused window is THE focused
+    // window of the Mac. Only that app is asked for it.
+    let isFront: Bool
+}
+
+// What one app answers to a refresh.
+private struct AppAnswer {
+    let windows: [TrackedWindow]
+    // Set only for the app in front (and only if it has a focused window).
+    let focusedWindowId: CGWindowID?
 }
 
 // MARK: One app
@@ -103,6 +133,7 @@ final class TrackedApp: @unchecked Sendable {
     let pid: pid_t
     let appName: String
     let bundleId: String?
+    let appPath: String?
     private let knownId: AeroSpaceKnownBundleId?
 
     private var runLoop: CFRunLoop?
@@ -129,6 +160,7 @@ final class TrackedApp: @unchecked Sendable {
         self.pid = nsApp.processIdentifier
         self.appName = nsApp.localizedName ?? "?"
         self.bundleId = nsApp.bundleIdentifier
+        self.appPath = nsApp.bundleURL?.path ?? nsApp.executableURL?.path
         self.knownId = nsApp.bundleIdentifier.flatMap { AeroSpaceKnownBundleId(rawValue: $0) }
     }
 
@@ -171,7 +203,7 @@ final class TrackedApp: @unchecked Sendable {
 
     // Hands a refresh to the app's thread; `done` gets the app's windows.
     // false = the last refresh hasn't finished (frozen app), nothing queued.
-    fileprivate func refresh(_ context: RefreshContext, done: @escaping ([TrackedWindow]) -> Void) -> Bool {
+    fileprivate func refresh(_ context: RefreshContext, done: @escaping (AppAnswer) -> Void) -> Bool {
         busyLock.lock()
         if busy { busyLock.unlock(); return false }
         busy = true
@@ -188,7 +220,7 @@ final class TrackedApp: @unchecked Sendable {
 
     // The refresh itself (AeroSpace's refreshAndGetAliveWindowIds plus
     // MacWindow.getOrRegister's sorting). App thread only.
-    private func refreshOnAppThread(_ context: RefreshContext) -> [TrackedWindow] {
+    private func refreshOnAppThread(_ context: RefreshContext) -> AppAnswer {
         let axApp = self.axApp ?? axApplication(pid: pid)
         self.axApp = axApp
         // The app has to accept "tell me about new windows" first. An app that
@@ -199,7 +231,7 @@ final class TrackedApp: @unchecked Sendable {
                 pid: pid, element: axApp,
                 names: [kAXWindowCreatedNotification, kAXFocusedWindowChangedNotification],
                 callback: trackerNotificationCallback)
-            if appSubscription == nil { return [] }
+            if appSubscription == nil { return AppAnswer(windows: [], focusedWindowId: nil) }
         }
 
         // Drop windows that are gone: a closed window's element no longer
@@ -241,12 +273,38 @@ final class TrackedApp: @unchecked Sendable {
             }
         }
 
-        return windows.map { id, entry in
+        let list = windows.map { id, entry in
             TrackedWindow(
                 id: id, pid: pid, appName: appName, bundleId: bundleId,
                 kind: entry.kind, subrole: entry.subrole,
                 minimized: axBool(entry.element, kAXMinimizedAttribute) ?? false,
-                appHidden: context.appHidden)
+                appHidden: context.appHidden,
+                frame: axFrame(entry.element),
+                fullscreen: axBool(entry.element, "AXFullScreen") ?? false,
+                appPath: appPath,
+                title: axString(entry.element, kAXTitleAttribute) ?? "")
+        }
+        // Which window has the keyboard focus (AeroSpace's
+        // getNativeFocusedWindow: the front app's focused window).
+        var focused: CGWindowID?
+        if context.isFront, let element = axElement(axApp, kAXFocusedWindowAttribute) {
+            focused = axWindowId(of: element)
+        }
+        return AppAnswer(windows: list, focusedWindowId: focused)
+    }
+
+    // Runs a small job on this app's thread with one of its windows: the
+    // window manager uses it to move, resize or focus a window
+    // (WorkspaceManager.swift, WindowSizing.swift). `body` gets the window
+    // and the app as Accessibility objects. If the tracker doesn't know the
+    // window (it was closed a moment ago), `missing` runs instead, also on
+    // this thread. Returns at once, the job runs when the thread gets to it,
+    // so a frozen app can never make the caller wait.
+    func act(on windowId: CGWindowID, _ body: @escaping (_ window: AXUIElement, _ app: AXUIElement) -> Void,
+             missing: (() -> Void)? = nil) {
+        perform { [self] in
+            guard let entry = windows[windowId], let axApp else { missing?(); return }
+            body(entry.element, axApp)
         }
     }
 }
@@ -261,6 +319,16 @@ final class WindowTracker: @unchecked Sendable {
     private let lock = NSLock()
     private var windowsByPid: [pid_t: [TrackedWindow]] = [:]
     private var lastRefreshDone: Date?
+    // The window with the keyboard focus as of the last refresh (the front
+    // app's focused window), nil if the front app has none or isn't watched.
+    private var focusedWindowId: CGWindowID?
+    // The threads of the watched apps, so `act` can be called from anywhere.
+    private var appsForActing: [pid_t: TrackedApp] = [:]
+
+    // Called on the main thread after every refresh, once the new list is
+    // in place. The window manager hangs its "sort new windows, hide and
+    // show" step here (WorkspaceManager.swift). Set before start().
+    var onRefresh: (() -> Void)?
 
     // Main thread only.
     private var apps: [pid_t: TrackedApp] = [:]
@@ -365,18 +433,30 @@ final class WindowTracker: @unchecked Sendable {
             apps[pid] = app
         }
 
+        lock.lock()
+        appsForActing = apps
+        lock.unlock()
+
         let group = DispatchGroup()
         let answersLock = NSLock()
         var answers: [pid_t: [TrackedWindow]] = [:]
+        var focusAnswer: CGWindowID?
+        var frontAnswered = false
         var stillBusy: [String] = []
+        let frontPid = front?.processIdentifier
         for (pid, app) in apps {
             let context = RefreshContext(
                 frontIsLockScreen: frontIsLockScreen, mouseDown: mouseDown,
-                appHidden: app.nsApp.isHidden, activationPolicy: app.nsApp.activationPolicy)
+                appHidden: app.nsApp.isHidden, activationPolicy: app.nsApp.activationPolicy,
+                isFront: pid == frontPid)
             group.enter()
-            let queued = app.refresh(context) { windows in
+            let queued = app.refresh(context) { answer in
                 answersLock.lock()
-                answers[pid] = windows
+                answers[pid] = answer.windows
+                if pid == frontPid {
+                    frontAnswered = true
+                    focusAnswer = answer.focusedWindowId
+                }
                 answersLock.unlock()
                 group.leave()
             }
@@ -393,9 +473,15 @@ final class WindowTracker: @unchecked Sendable {
             let allAnswered = group.wait(timeout: .now() + 3) == .success
             answersLock.lock()
             let got = answers
+            let gotFocus = focusAnswer
+            let gotFront = frontAnswered
             answersLock.unlock()
             DispatchQueue.main.async { [self] in
                 lock.lock()
+                // The focus only changes when the front app answered. If the
+                // front app is one that isn't watched (AeroSwitcher's own
+                // panel, the lock screen) the last known focus stays.
+                if gotFront { focusedWindowId = gotFocus }
                 // Apps that quit are dropped; apps that answered get their
                 // new list; apps that didn't keep their old one.
                 windowsByPid = windowsByPid.filter { apps[$0.key] != nil }
@@ -417,7 +503,7 @@ final class WindowTracker: @unchecked Sendable {
                     // lists agree without waiting for the first Cmd+Tab. One
                     // AeroSpace question, in the background.
                     DispatchQueue.global(qos: .utility).async { [self] in
-                        if let theirs = getWindowsWithFocus()?.windows {
+                        if !ownWindowManager, let theirs = getWindowsWithFocus()?.windows {
                             _ = compareAndLog(theirs, label: "at launch: ", isRecheck: false)
                         }
                     }
@@ -430,6 +516,7 @@ final class WindowTracker: @unchecked Sendable {
                         logWarn("WindowTracker: refresh took \(ms) ms, no answer yet from: \(late.isEmpty ? "-" : late.joined(separator: ", "))")
                     }
                 }
+                onRefresh?()
                 refreshRunning = false
                 if refreshAgain {
                     refreshAgain = false
@@ -446,6 +533,26 @@ final class WindowTracker: @unchecked Sendable {
         return (Array(windowsByPid.values.joined()), lastRefreshDone)
     }
 
+    // The window with the keyboard focus as of the last refresh. Any thread.
+    func currentFocusedWindowId() -> CGWindowID? {
+        lock.lock()
+        defer { lock.unlock() }
+        return focusedWindowId
+    }
+
+    // Hands a job to the thread of the app that owns the window (see
+    // TrackedApp.act). Any thread. If the app isn't watched any more (it
+    // quit), `missing` runs right here instead.
+    func act(pid: pid_t, windowId: CGWindowID,
+             _ body: @escaping (_ window: AXUIElement, _ app: AXUIElement) -> Void,
+             missing: (() -> Void)? = nil) {
+        lock.lock()
+        let app = appsForActing[pid]
+        lock.unlock()
+        guard let app else { missing?(); return }
+        app.act(on: windowId, body, missing: missing)
+    }
+
     // MARK: Comparing with AeroSpace
 
     // Called by Cmd+Tab (WindowController.swift) with AeroSpace's list of
@@ -459,7 +566,9 @@ final class WindowTracker: @unchecked Sendable {
     // background), which says "matches now" (just timing) or "still differs"
     // (a real difference to look into).
     func checkAgainstAeroSpace(_ aerospaceWindows: [AeroWindow]) {
-        guard isRunning else { return }
+        // With AeroSwitcher's own window manager there is no AeroSpace to
+        // compare with (the "AeroSpace list" is this very list).
+        guard isRunning, !ownWindowManager else { return }
         DispatchQueue.global(qos: .utility).async { [self] in
             guard !compareAndLog(aerospaceWindows, label: "", isRecheck: false) else { return }
             DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1) { [self] in
