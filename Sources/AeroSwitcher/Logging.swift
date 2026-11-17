@@ -15,8 +15,8 @@ import Foundation
 //
 //   logInfo   normal things that happened (a menu item clicked, a reload)
 //   logWarn   something failed but the app carries on
-//   logError  a feature is down (no Cmd+Tab hook, can't reach AeroSpace)
-//   logDebug  chatter, like every single AeroSpace event. Always printed, but
+//   logError  a feature is down (no Cmd+Tab hook)
+//   logDebug  chatter, like every window list refresh. Always printed, but
 //             only written to the file when debug logging is switched on:
 //               AEROSWITCHER_DEBUG=1 in the environment, or
 //               defaults write com.aeroswitcher.app LogDebug -bool true

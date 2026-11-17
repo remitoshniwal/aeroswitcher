@@ -3,88 +3,36 @@ import ServiceManagement
 
 // MARK: - Menu bar icon
 //
-// The one icon AeroSwitcher puts in the menu bar. It replaces AeroSpace's
-// own icon: it shows the name of the workspace you're in, and its menu does
-// what AeroSpace's menu does (switch workspace, enable or disable, reload,
-// open the config) plus AeroSwitcher's own things (Settings, permission
-// status, launch at login, About, Quit).
+// The one icon AeroSwitcher puts in the menu bar. It shows the name of the
+// workspace you're in, and its menu lets you switch workspace, bring back
+// every window (the rescue for a window stuck off screen), reload the
+// config, plus AeroSwitcher's own things (Settings, permission status,
+// launch at login, About, Quit).
 //
-// AeroSpace's own icon can be hidden with "Hide AeroSpace's icon" in this
-// menu (see "Hiding AeroSpace's icon" below for how). Do NOT use System
-// Settings > Menu Bar > "Allow in the Menu Bar" for it, or Cmd-drag it out
-// of the bar: AeroSpace quits when its icon is removed (tested), and turns
-// the icon back on next time it starts.
-//
-// How it stays up to date:
-//   - The workspace name comes from AeroSpaceEventStream (AeroSpaceBridge.swift),
-//     which gets told the moment you switch.
-//   - The workspace list in the menu is read fresh every time the menu is
-//     opened, so even a missed event can't leave a stale menu behind.
-//
-// With AeroSwitcher's own window manager (Phase 14, `ownWindowManager`)
-// there is no AeroSpace to listen to: the name comes from WorkspaceManager
-// (WorkspaceManager.swift) instead, the items that only make sense with
-// AeroSpace are left out, and "Bring Back All Windows" is added, the rescue
-// for a window stuck off screen.
+// How it stays up to date: the window manager (WorkspaceManager.swift)
+// tells it the moment the workspace changes, and the menu is rebuilt from
+// the manager's in-memory copy every time it opens, so a missed update
+// can't leave a stale menu behind.
 
 @MainActor
 final class MenuBarController: NSObject, NSMenuDelegate {
     private let statusItem: NSStatusItem
-    private let stream = AeroSpaceEventStream()
 
     // What the bar currently shows.
     private var workspaceName: String?
-    private var mode = "main"
-    private var connected = false
-    // AeroSpace has no command to ask whether it is enabled, but it
-    // announces it on the event stream: turning it off sends a mode-changed
-    // event with no mode (see AeroSpaceEventStream.onMode), turning it on
-    // sends "main" again. A new connection always starts with the current
-    // state, so this is right even after AeroSpace restarts.
-    private var aerospaceEnabled = true
 
-    // `onFocus` gets every "this window now has focus" event of the one
-    // `aerospace subscribe` connection this icon already keeps (see main.swift).
+    // `onFocus` gets every "this window now has focus" report from the
+    // window manager; it feeds the recent order (see main.swift).
     init(onFocus: ((String, String) -> Void)? = nil) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
-        if ownWindowManager {
-            WorkspaceManager.shared.onFocusChanged = onFocus
-        } else {
-            stream.onFocus = onFocus
-        }
+        WorkspaceManager.shared.onFocusChanged = onFocus
         // Remembers where in the bar you dragged the icon (Cmd+drag).
         statusItem.autosaveName = "AeroSwitcher"
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
-        updateBar()
 
-        stream.onWorkspace = { [weak self] name in
-            MainActor.assumeIsolated {
-                self?.workspaceName = name
-                self?.updateBar()
-                // So the menu already has the right tick and apps next
-                // time it opens.
-                self?.refreshSnapshot()
-            }
-        }
-        stream.onMode = { [weak self] mode in
-            MainActor.assumeIsolated {
-                self?.aerospaceEnabled = mode != nil
-                if let mode { self?.mode = mode }
-                self?.updateBar()
-                self?.refreshSnapshot()  // enabled/disabled changes what the menu shows
-            }
-        }
-        stream.onConnection = { [weak self] connected in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.connected = connected
-                self.updateBar()
-                self.refreshSnapshot()
-            }
-        }
         // The Permissions item follows the setup check (SetupHelp.swift).
         NotificationCenter.default.addObserver(forName: .setupStatusChanged, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -92,42 +40,35 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                 self.buildMenu(menu)
             }
         }
-        if ownWindowManager {
-            // No AeroSpace: the workspace name comes from AeroSwitcher's own
-            // window manager, and there is nothing to hide or listen to.
-            workspaceName = WorkspaceManager.shared.focusedWorkspaceSnapshot()
-            WorkspaceManager.shared.onWorkspaceChanged = { [weak self] name in
-                guard let self else { return }
-                MainActor.assumeIsolated {
-                    self.workspaceName = name
-                    self.updateBar()
-                    self.refreshSnapshot()
-                }
+        workspaceName = WorkspaceManager.shared.focusedWorkspaceSnapshot()
+        WorkspaceManager.shared.onWorkspaceChanged = { [weak self] name in
+            guard let self else { return }
+            MainActor.assumeIsolated {
+                self.workspaceName = name
+                self.updateBar()
+                self.refreshSnapshot()
             }
-            updateBar()
-            // The manager can pause or carry on by itself (AeroSpace started,
-            // a permission switched off and on), with no event for it. A cheap
-            // look every few seconds keeps the warning symbol honest.
-            managerTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
-                guard let self else { return }
-                MainActor.assumeIsolated { self.updateBar() }
-            }
-        } else {
-            // Put the divider back if AeroSpace's icon was hidden last time.
-            if hideAeroSpaceIcon { showDivider(wide: true) }
-            stream.start()
+        }
+        updateBar()
+        // The manager can pause or carry on by itself (another window
+        // manager started, a permission switched off and on), with no event
+        // for it. A cheap look every few seconds keeps the warning symbol
+        // honest.
+        managerTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            MainActor.assumeIsolated { self.updateBar() }
         }
 
-        // `pkill AeroSwitcher` (and Ctrl+C in Terminal) must also end the
-        // `aerospace subscribe` process that belongs to this app. The
-        // handlers run on a background queue on purpose: if the main thread
-        // were ever stuck, a quit signal would still work.
+        // `pkill AeroSwitcher` (and Ctrl+C in Terminal) end the app the
+        // normal way, so the window manager's quit step (atexit in
+        // WorkspaceManager.swift) still puts every parked window back on
+        // screen. The handlers run on a background queue on purpose: if the
+        // main thread were ever stuck, a quit signal would still work.
         for signalNumber in [SIGTERM, SIGINT] {
             signal(signalNumber, SIG_IGN)
             let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: .global())
-            source.setEventHandler { [stream] in
+            source.setEventHandler {
                 logInfo("Quit by signal \(signalNumber)")
-                stream.stop()
                 flushLog()
                 exit(0)
             }
@@ -135,8 +76,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             quitSignalSources.append(source)
         }
         NotificationCenter.default.addObserver(
-            forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [stream] _ in
-            stream.stop()
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
             logInfo("Quitting")
             flushLog()
         }
@@ -147,36 +87,25 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     // MARK: The bar itself
 
-    // Text for a normal state, a symbol when something's off. Fonts are
-    // monospaced like AeroSpace's default so the icon doesn't change width
-    // much between workspace names; change the font here if you prefer.
+    // The workspace name normally, a warning symbol while the window
+    // manager is paused. The font is monospaced so the icon doesn't change
+    // width much between workspace names; change the font here if you
+    // prefer.
     private func updateBar() {
         guard let button = statusItem.button else { return }
-        if ownWindowManager {
-            if let reason = WorkspaceManager.shared.pausedReason {
-                show(symbol: "exclamationmark.triangle.fill", on: button)
-                button.toolTip = "AeroSwitcher's window manager is paused: \(reason)"
-            } else {
-                showName(workspaceName ?? WorkspaceManager.shared.focusedWorkspaceSnapshot(), prefix: "", on: button)
-            }
-            return
-        }
-        if !connected {
+        if let reason = WorkspaceManager.shared.pausedReason {
             show(symbol: "exclamationmark.triangle.fill", on: button)
-            button.toolTip = "AeroSwitcher can't reach AeroSpace. Is AeroSpace running?"
-        } else if !aerospaceEnabled {
-            show(symbol: "pause.circle.fill", on: button)
-            button.toolTip = "AeroSpace is disabled"
+            button.toolTip = "AeroSwitcher's window manager is paused: \(reason)"
         } else {
-            showName(workspaceName, prefix: mode == "main" ? "" : "(\(mode.uppercased())) ", on: button)
+            showName(workspaceName ?? WorkspaceManager.shared.focusedWorkspaceSnapshot(), on: button)
         }
     }
 
-    private func showName(_ name: String?, prefix: String, on button: NSStatusBarButton) {
+    private func showName(_ name: String?, on button: NSStatusBarButton) {
         button.image = nil
         button.imagePosition = .noImage
         button.font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-        button.title = prefix + (name ?? "...")
+        button.title = name ?? "..."
         button.toolTip = nil
     }
 
@@ -188,71 +117,32 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     // MARK: The menu
 
-    // What the menu shows about AeroSpace, as last asked. The menu is
-    // built from this right away and never waits for AeroSpace itself.
-    //
-    // Why: the first version asked AeroSpace while the menu was opening,
-    // on the main thread, and in testing those questions sometimes took
-    // over 2 seconds (from Terminal they take 10-40 ms). Likely cause, not
-    // proven: while our menu opens, AeroSpace asks AeroSwitcher about its
-    // windows, which our busy main thread can't answer, so both wait on
-    // each other. Asking in the background avoids that either way.
+    // What the menu shows, as last read from the window manager.
     private struct MenuSnapshot: Equatable {
         var focused: String?
         var names: [String] = []
         var apps: [String: [String]] = [:]
-        var disabled = false
-        var reachable: Bool { focused != nil }
+        var hasWorkspaces: Bool { !names.isEmpty }
     }
     private var snapshot = MenuSnapshot()
-    private var refreshing = false
 
-    // Asks AeroSpace for everything the menu needs, off the main thread,
-    // then rebuilds the menu if anything changed (also while it's open,
-    // macOS updates an open menu in place).
+    // Reads everything the menu needs (all in memory, nothing to wait
+    // for), then rebuilds the menu if anything changed (also while it's
+    // open, macOS updates an open menu in place).
     private func refreshSnapshot() {
-        guard !refreshing else { return }
-        refreshing = true
-        if ownWindowManager {
-            // Everything is already in memory, nothing to wait for.
-            var fresh = MenuSnapshot()
-            let manager = WorkspaceManager.shared
-            fresh.focused = manager.focusedWorkspaceSnapshot()
-            fresh.names = manager.workspaceNamesSnapshot()
-            fresh.apps = getAppNamesByWorkspace()
-            refreshing = false
-            updateBar()
-            if fresh != snapshot {
-                snapshot = fresh
-                if let menu = statusItem.menu { buildMenu(menu) }
-            }
-            return
-        }
-        Task.detached {
-            let focusedAnswer = runAerospace(["list-workspaces", "--focused"])
-            var fresh = MenuSnapshot()
-            fresh.focused = focusedAnswer.ok && !focusedAnswer.output.isEmpty ? focusedAnswer.output : nil
-            // A disabled AeroSpace refuses every command except `enable`,
-            // and says so. That's not "can't reach it", the Enable item
-            // must stay usable.
-            fresh.disabled = fresh.focused == nil && focusedAnswer.output.contains("disabled")
-            if fresh.focused != nil {
-                fresh.names = runAerospace(["list-workspaces", "--all"]).output
-                    .split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-                fresh.apps = getAppNamesByWorkspace()
-            }
-            let result = fresh
-            await MainActor.run {
-                self.refreshing = false
-                guard result != self.snapshot else { return }
-                self.snapshot = result
-                if let menu = self.statusItem.menu { self.buildMenu(menu) }
-            }
+        var fresh = MenuSnapshot()
+        let manager = WorkspaceManager.shared
+        fresh.focused = manager.focusedWorkspaceSnapshot()
+        fresh.names = manager.workspaceNamesSnapshot()
+        fresh.apps = getAppNamesByWorkspace()
+        updateBar()
+        if fresh != snapshot {
+            snapshot = fresh
+            if let menu = statusItem.menu { buildMenu(menu) }
         }
     }
 
-    // Called by macOS every time the menu is about to open: shows what's
-    // known right away, and asks AeroSpace for fresh data on the side.
+    // Called by macOS every time the menu is about to open.
     func menuNeedsUpdate(_ menu: NSMenu) {
         guard menu === statusItem.menu else { return }
         buildMenu(menu)
@@ -264,65 +154,36 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.removeAllItems()
         menu.autoenablesItems = false  // so an item set to disabled below stays disabled
 
-        let focused = snapshot.focused
-        let allNames = snapshot.names
-        let disabled = snapshot.disabled
-        let reachable = snapshot.reachable
-
-        if reachable {
+        if snapshot.hasWorkspaces {
             menu.addItem(NSMenuItem.sectionHeader(title: "Workspaces"))
-            let apps = snapshot.apps
-            for name in allNames {
+            for name in snapshot.names {
                 let item = NSMenuItem(title: name, action: #selector(workspaceClicked(_:)), keyEquivalent: "")
                 item.target = self
                 item.representedObject = name
-                item.state = name == focused ? .on : .off
-                item.attributedTitle = workspaceRowTitle(name: name, apps: apps[name] ?? [])
+                item.state = name == snapshot.focused ? .on : .off
+                item.attributedTitle = workspaceRowTitle(name: name, apps: snapshot.apps[name] ?? [])
                 menu.addItem(item)
             }
         } else {
-            let text: String
-            if ownWindowManager {
-                text = WorkspaceManager.shared.pausedReason.map { "Window manager paused: \($0)" } ?? "No workspaces set up"
-            } else {
-                text = disabled ? "AeroSpace is disabled" : "Can't reach AeroSpace. Is it running?"
-            }
-            let item = NSMenuItem(title: text, action: nil, keyEquivalent: "")
+            let item = NSMenuItem(title: "No workspaces set up (Settings > Workspaces)", action: nil, keyEquivalent: "")
             item.isEnabled = false
             menu.addItem(item)
         }
 
         menu.addItem(.separator())
 
-        if ownWindowManager {
-            // Paused shows on its own line too, so the reason is readable
-            // without hovering over the icon.
-            if reachable, let reason = WorkspaceManager.shared.pausedReason {
-                let paused = NSMenuItem(title: "Window manager paused: \(reason)", action: nil, keyEquivalent: "")
-                paused.isEnabled = false
-                menu.addItem(paused)
-            }
-            menu.addItem(item("Bring Back All Windows", #selector(bringBackClicked)))
-            menu.addItem(item("Reload config", #selector(reloadClicked)))
-        } else {
-            addAeroSpaceItems(menu, reachable: reachable, disabled: disabled)
+        // Paused shows on its own line too, so the reason is readable
+        // without hovering over the icon.
+        if let reason = WorkspaceManager.shared.pausedReason {
+            let paused = NSMenuItem(title: "Window manager paused: \(reason)", action: nil, keyEquivalent: "")
+            paused.isEnabled = false
+            menu.addItem(paused)
         }
+        menu.addItem(item("Bring Back All Windows", #selector(bringBackClicked)))
+        menu.addItem(item("Reload config", #selector(reloadClicked)))
 
         menu.addItem(.separator())
         addRestOfMenu(menu)
-    }
-
-    // AeroSpace's own items: turn it on or off, reload both configs, open its
-    // config file. Only when AeroSpace is the window manager.
-    private func addAeroSpaceItems(_ menu: NSMenu, reachable: Bool, disabled: Bool) {
-        let toggle = NSMenuItem(
-            title: aerospaceEnabled ? "Disable AeroSpace" : "Enable AeroSpace",
-            action: #selector(toggleEnabledClicked), keyEquivalent: "")
-        toggle.target = self
-        toggle.isEnabled = reachable || disabled
-        menu.addItem(toggle)
-        menu.addItem(item("Reload config", #selector(reloadClicked)))
-        menu.addItem(item("Open AeroSpace config", #selector(openAeroSpaceConfigClicked)))
     }
 
     private func addRestOfMenu(_ menu: NSMenu) {
@@ -342,11 +203,6 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let login = item("Launch at login", #selector(launchAtLoginClicked))
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(login)
-        if !ownWindowManager {
-            let hide = item("Hide AeroSpace's icon", #selector(hideAeroSpaceIconClicked))
-            hide.state = hideAeroSpaceIcon ? .on : .off
-            menu.addItem(hide)
-        }
         menu.addItem(item("About AeroSwitcher", #selector(aboutClicked)))
         menu.addItem(item("Quit AeroSwitcher", #selector(quitClicked)))
     }
@@ -358,7 +214,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     // "Core" in the normal text, then the apps in it in smaller grey text,
-    // cut off after about 25 characters like AeroSpace does.
+    // cut off after about 25 characters.
     private func workspaceRowTitle(name: String, apps: [String]) -> NSAttributedString {
         let mono = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         let result = NSMutableAttributedString(string: name, attributes: [.font: mono])
@@ -406,34 +262,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             submenu.addItem(row)
         }
         let cmdTabAllowed = status.accessibilityTrusted || status.inputPreflight
-        if status.ownMode {
-            // Same rows as the Setup window in this mode: no AeroSpace.
-            row("Window manager", mark: status.managerPausedReason == nil ? "✓" : "✗", opensSetup: true)
-            row("Accessibility (Cmd+Tab and windows)", mark: status.inputMonitoringOK ? "✓" : "✗",
-                url: cmdTabAllowed ? nil : "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
-                opensSetup: cmdTabAllowed)
-            row("Screen Recording (thumbnails)", mark: status.screenRecording ? "✓" : "✗",
-                url: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
-            submenu.addItem(.separator())
-            submenu.addItem(item("Setup...", #selector(setupHelpClicked)))
-            parent.submenu = submenu
-            return parent
-        }
-        row("Accessibility (Cmd+Tab)", mark: status.inputMonitoringOK ? "✓" : "✗",
+        row("Window manager", mark: status.managerPausedReason == nil ? "✓" : "✗", opensSetup: true)
+        row("Accessibility (Cmd+Tab and windows)", mark: status.inputMonitoringOK ? "✓" : "✗",
             url: cmdTabAllowed ? nil : "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
             opensSetup: cmdTabAllowed)
         row("Screen Recording (thumbnails)", mark: status.screenRecording ? "✓" : "✗",
             url: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
-        let installedMark = status.cliPath == nil ? "✗" : (status.needsRestartForCLI ? "!" : "✓")
-        row("AeroSpace installed", mark: installedMark, opensSetup: true)
-        let runningMark: String
-        switch status.aerospace {
-        case .running: runningMark = "✓"
-        case .notInstalled, .notRunning: runningMark = "✗"
-        case .disabled, .unknown: runningMark = "!"
-        }
-        row("AeroSpace running", mark: runningMark, opensSetup: true)
-        row("Recent order", mark: status.recentOrderNeedsHook && status.hook != .present ? "!" : "✓", opensSetup: true)
         submenu.addItem(.separator())
         submenu.addItem(item("Setup...", #selector(setupHelpClicked)))
         parent.submenu = submenu
@@ -460,54 +294,18 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         guard let name = sender.representedObject as? String else { return }
         logInfo("Menu: switch to workspace \(name)")
         switchToWorkspace(name)
-        // The bar updates when AeroSpace reports the switch (the event).
-    }
-
-    @objc private func toggleEnabledClicked() {
-        let enable = !aerospaceEnabled
-        logInfo("Menu: \(enable ? "enable" : "disable") AeroSpace")
-        Task.detached {
-            let result = setAeroSpaceEnabled(enable)
-            logInfo("aerospace enable \(enable ? "on" : "off"): \(result.ok ? "ok" : "failed") \(result.output)")
-            await MainActor.run {
-                if result.ok { self.aerospaceEnabled = enable }
-                self.updateBar()
-            }
-        }
+        // The bar updates when the window manager reports the switch.
     }
 
     @objc private func reloadClicked() {
         logInfo("Menu: reload config")
-        if ownWindowManager {
-            // No AeroSpace config to reload, only config.json.
-            let report = settings.reload()
-            ConfigProblemsWindow.shared.update(report: report, aerospace: nil)
-        } else {
-            settings.reloadTogether()
-        }
+        let report = settings.reload()
+        ConfigProblemsWindow.shared.update(report: report)
     }
 
     @objc private func bringBackClicked() {
         logInfo("Menu: bring back all windows")
         WorkspaceManager.shared.bringBackAllWindows()
-    }
-
-    @objc private func openAeroSpaceConfigClicked() {
-        logInfo("Menu: open AeroSpace config")
-        Task.detached {
-            // Ask AeroSpace where its config is; if it can't answer, the
-            // usual place.
-            let path = getAeroSpaceConfigPath() ?? NSHomeDirectory() + "/.aerospace.toml"
-            await MainActor.run {
-                if FileManager.default.fileExists(atPath: path) {
-                    NSWorkspace.shared.open(URL(fileURLWithPath: path))
-                } else {
-                    logWarn("No AeroSpace config found at \(path).")
-                    showFailureAlert("No AeroSpace config found",
-                        "AeroSpace reads \(path). Create that file, then try again.")
-                }
-            }
-        }
     }
 
     @objc private func openConfigJSONClicked() {
@@ -578,117 +376,6 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         NSApp.activate(ignoringOtherApps: true)
         alert.runModal()
     }
-
-    // MARK: Hiding AeroSpace's icon
-    //
-    // AeroSpace's icon can't be switched off: AeroSpace quits the moment
-    // macOS tells it its icon was removed (System Settings > Menu Bar, or
-    // Cmd-dragging it out of the bar), and turns the icon back on when it
-    // starts again. So instead it gets pushed off the screen, the same
-    // trick menu bar tidying apps like Ice and Bartender use:
-    //
-    //   [AeroSpace's icon] [divider] [AeroSwitcher's icon] [other icons...]
-    //
-    // The divider is a second, invisible icon of AeroSwitcher's own that is
-    // 3000 points wide. Menu bar icons are laid out from the right, so
-    // everything on its left ends up far off the left edge of the screen.
-    // AeroSpace still has its icon (macOS never tells it anything changed),
-    // it just can't be seen. Tested on macOS 26.5: AeroSpace kept running
-    // and switching workspaces with its icon off screen.
-    //
-    // Catch: ANY icon to the left of AeroSwitcher's own gets hidden this
-    // way, not just AeroSpace's. Cmd-drag icons you want to see to the
-    // right of AeroSwitcher's icon (while the divider shows as │).
-    //
-    // AeroSwitcher can't see which icon is AeroSpace's (on macOS 26 every
-    // menu bar icon belongs to Control Center, and finding out would need
-    // the Accessibility permission). So when you turn this on, the divider
-    // first shows as a thin │ and you check, or drag, AeroSpace's icon to
-    // its left. macOS remembers icon positions, so that's a one-time step.
-    //
-    // The on/off choice is stored in AeroSwitcher's own preferences, not in
-    // config.json: it belongs with the divider's saved position (also in
-    // these preferences, and only meaningful on this Mac), and turning it on
-    // needs the arranging step above, which a hand edit of config.json would
-    // skip. The settings window shows it as a toggle that runs this code.
-
-    private var divider: NSStatusItem?
-    private let hideAeroSpaceIconKey = "HideAeroSpaceIcon"
-
-    private var hideAeroSpaceIcon: Bool {
-        get { UserDefaults.standard.bool(forKey: hideAeroSpaceIconKey) }
-        set { UserDefaults.standard.set(newValue, forKey: hideAeroSpaceIconKey) }
-    }
-
-    // For the settings window's toggle.
-    var isHidingAeroSpaceIcon: Bool { hideAeroSpaceIcon }
-
-    // wide = hiding (3000 points, no text). Not wide = the thin │ shown
-    // while you arrange icons.
-    private func showDivider(wide: Bool) {
-        if divider == nil {
-            // macOS saves each icon's place as a number under "NSStatusItem
-            // Preferred Position <name>", bigger means further left. The
-            // first time, place the divider just left of AeroSwitcher's
-            // icon by giving it a number one bigger. After that macOS keeps
-            // whatever place it ends up in.
-            let defaults = UserDefaults.standard
-            let dividerKey = "NSStatusItem Preferred Position AeroSwitcherDivider"
-            let mainKey = "NSStatusItem Preferred Position AeroSwitcher"
-            if defaults.object(forKey: dividerKey) == nil, defaults.object(forKey: mainKey) != nil {
-                defaults.set(defaults.double(forKey: mainKey) + 1, forKey: dividerKey)
-            }
-            let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-            item.autosaveName = "AeroSwitcherDivider"
-            divider = item
-        }
-        divider?.length = wide ? 3000 : NSStatusItem.variableLength
-        divider?.button?.title = wide ? "" : "│"
-        logInfo("Divider: \(wide ? "wide, hiding the icons on its left" : "showing as │")")
-    }
-
-    private func removeDivider() {
-        if let divider { NSStatusBar.system.removeStatusItem(divider) }
-        divider = nil
-        logInfo("Divider: removed, AeroSpace's icon is visible again")
-    }
-
-    // Not private, for the same reason as launchAtLoginClicked: the settings
-    // window's toggle runs exactly this, alert and all.
-    @objc func hideAeroSpaceIconClicked() {
-        defer { NotificationCenter.default.post(name: .menuBarTogglesChanged, object: nil) }
-        if hideAeroSpaceIcon {
-            logInfo("Menu: show AeroSpace's icon again")
-            hideAeroSpaceIcon = false
-            removeDivider()
-            return
-        }
-        logInfo("Menu: hide AeroSpace's icon (arranging)")
-        showDivider(wide: false)
-        let alert = NSAlert()
-        alert.messageText = "Hide AeroSpace's icon"
-        alert.informativeText = """
-            A thin │ is now next to AeroSwitcher's workspace name in the menu bar. \
-            Everything to the LEFT of the │ will be hidden.
-
-            AeroSpace's workspace name has to be on the left of the │. If it isn't, \
-            hold Cmd and drag it there. Keep it inside the menu bar: dragging it \
-            out of the bar quits AeroSpace.
-
-            Any other icon on the left of the │ gets hidden too, Cmd-drag it to the \
-            right of AeroSwitcher's name to keep it.
-            """
-        alert.addButton(withTitle: "Hide")
-        alert.addButton(withTitle: "Cancel")
-        NSApp.activate(ignoringOtherApps: true)
-        if alert.runModal() == .alertFirstButtonReturn {
-            hideAeroSpaceIcon = true
-            showDivider(wide: true)
-        } else {
-            removeDivider()
-        }
-    }
-
     // MARK: About, Quit
 
     // The standard macOS About panel. It fills in the icon, the name, the
@@ -699,39 +386,15 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     // appVersion() in Config.swift.
     @objc private func aboutClicked() {
         logInfo("Menu: about")
-        if ownWindowManager {
-            showAbout(aerospaceText: "")
-            return
-        }
-        // AeroSpace is asked off the main thread first (the same thread runs
-        // the Cmd+Tab hook, and a slow AeroSpace used to freeze it for up to
-        // 2 seconds here). The panel opens once there's an answer.
-        Task.detached {
-            let aerospaceText = getAeroSpaceVersionText()
-            await MainActor.run { self.showAbout(aerospaceText: aerospaceText) }
-        }
+        showAbout()
     }
 
-    // `aerospace --version` prints two lines (the command's version and the
-    // running app's). The app's is the one that matters, so show that one.
-    private func aerospaceVersionLine(_ text: String) -> String {
-        if let range = text.range(of: "server version: ") {
-            let version = text[range.upperBound...].split(whereSeparator: { $0 == " " || $0 == "\n" }).first ?? ""
-            if !version.isEmpty && !version.hasPrefix("Can't") { return "AeroSpace \(version)" }
-        }
-        if let range = text.range(of: "client version: ") {
-            let version = text[range.upperBound...].split(whereSeparator: { $0 == " " || $0 == "\n" }).first ?? ""
-            if !version.isEmpty { return "AeroSpace \(version) (not running)" }
-        }
-        return "AeroSpace isn't reachable"
-    }
-
-    private func showAbout(aerospaceText: String) {
+    private func showAbout() {
         let repoURL = "https://github.com/remitoshniwal/aeroswitcher"
         let font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
         let plain: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.labelColor]
         let credits = NSMutableAttributedString(
-            string: "A Cmd+Tab for the current AeroSpace workspace.\n\n", attributes: plain)
+            string: "Workspaces for macOS, with a Cmd+Tab that only shows the current workspace.\n\n", attributes: plain)
         func line(_ text: String, link: (word: String, url: String)? = nil) {
             let start = credits.length
             credits.append(NSAttributedString(string: text + "\n", attributes: plain))
@@ -741,7 +404,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             }
         }
         if let v = appVersion() { line("Commit \(v.commit)") }
-        line(ownWindowManager ? "Window manager: built in (AeroSpace not used)" : aerospaceVersionLine(aerospaceText))
+        line("Window management adapted from AeroSpace (MIT)", link: ("AeroSpace", "https://github.com/nikitabobko/AeroSpace"))
         line("")
         line("Source code on GitHub", link: ("Source code on GitHub", repoURL))
         line("MIT License", link: ("MIT License", repoURL + "/blob/main/LICENSE"))
@@ -763,8 +426,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 }
 
 extension Notification.Name {
-    // Posted after Launch at login or Hide AeroSpace's icon was clicked
-    // (in the menu or the settings window), so an open settings window
-    // shows the new state.
+    // Posted after Launch at login was clicked (in the menu or the settings
+    // window), so an open settings window shows the new state.
     static let menuBarTogglesChanged = Notification.Name("AeroSwitcherMenuBarTogglesChanged")
 }

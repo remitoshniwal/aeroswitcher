@@ -1,17 +1,10 @@
 import AppKit
 
-// MARK: - Window tracker (Phase 14, B1: watch only)
+// MARK: - Window tracker (Phase 14)
 
 // AeroSwitcher's own live list of every real window on the Mac, read straight
-// from macOS through Accessibility instead of asking AeroSpace. In B1 it only
-// WATCHES: Cmd+Tab still shows AeroSpace's list exactly as before, and the
-// only thing this list is used for is one log line per Cmd+Tab saying whether
-// the two lists agree (checkAgainstAeroSpace, bottom of this file). Nothing
-// here moves, resizes, hides or focuses a window. Later steps build on it:
-// B2 sorts these windows into workspaces, B6 makes Cmd+Tab read from it.
-//
-// Since B2 to B6 the tracker also feeds AeroSwitcher's own window manager
-// (WorkspaceManager.swift): each window now carries its position and size,
+// from macOS through Accessibility. It feeds the window manager
+// (WorkspaceManager.swift): each window carries its position and size,
 // its title (kept in memory for the Cmd+Tab card, never logged) and whether
 // it is in macOS full screen; the tracker says which window has the keyboard
 // focus; and `onRefresh` tells the manager "the list was just updated". The
@@ -499,14 +492,6 @@ final class WindowTracker: @unchecked Sendable {
                 if isFirstRefresh {
                     isFirstRefresh = false
                     logInfo("WindowTracker: watching \(apps.count) apps, \(all.count) windows (\(all.filter(\.countsLikeAeroSpace).count) of them counted like AeroSpace), first look took \(ms) ms")
-                    // One comparison right away, so the log says whether the
-                    // lists agree without waiting for the first Cmd+Tab. One
-                    // AeroSpace question, in the background.
-                    DispatchQueue.global(qos: .utility).async { [self] in
-                        if !ownWindowManager, let theirs = getWindowsWithFocus()?.windows {
-                            _ = compareAndLog(theirs, label: "at launch: ", isRecheck: false)
-                        }
-                    }
                 } else if !allAnswered || !stillBusy.isEmpty || ms > 1000 {
                     // At most one warning a minute, a frozen app would
                     // otherwise write one at every click.
@@ -551,61 +536,5 @@ final class WindowTracker: @unchecked Sendable {
         lock.unlock()
         guard let app else { missing?(); return }
         app.act(on: windowId, body, missing: missing)
-    }
-
-    // MARK: Comparing with AeroSpace
-
-    // Called by Cmd+Tab (WindowController.swift) with AeroSpace's list of
-    // every window from that same press. Main thread; the comparing and
-    // logging run in the background, so Cmd+Tab doesn't wait for them.
-    //
-    // Writes one line: "matches AeroSpace (N windows)", or "differs" with the
-    // windows only one side has. Because a window that opened or closed a
-    // moment ago can be on one side only for a split second, a difference is
-    // checked again 1 second later (asking AeroSpace once more, in the
-    // background), which says "matches now" (just timing) or "still differs"
-    // (a real difference to look into).
-    func checkAgainstAeroSpace(_ aerospaceWindows: [AeroWindow]) {
-        // With AeroSwitcher's own window manager there is no AeroSpace to
-        // compare with (the "AeroSpace list" is this very list).
-        guard isRunning, !ownWindowManager else { return }
-        DispatchQueue.global(qos: .utility).async { [self] in
-            guard !compareAndLog(aerospaceWindows, label: "", isRecheck: false) else { return }
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1) { [self] in
-                guard let again = getWindowsWithFocus()?.windows else { return }
-                _ = compareAndLog(again, label: "1 s later: ", isRecheck: true)
-            }
-        }
-    }
-
-    // true = the lists match.
-    private func compareAndLog(_ aerospaceWindows: [AeroWindow], label: String, isRecheck: Bool) -> Bool {
-        let (all, refreshedAt) = currentWindows()
-        let allById = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let ours = Set(all.filter(\.countsLikeAeroSpace).map(\.id))
-        var theirs: [CGWindowID: AeroWindow] = [:]
-        for window in aerospaceWindows {
-            if let id = CGWindowID(window.id) { theirs[id] = window }
-        }
-        let onlyAeroSpace = Set(theirs.keys).subtracting(ours).sorted()
-        let onlyTracker = ours.subtracting(theirs.keys).sorted()
-        if onlyAeroSpace.isEmpty && onlyTracker.isEmpty {
-            logInfo("WindowTracker: \(label)\(isRecheck ? "matches now" : "matches") AeroSpace (\(ours.count) windows)")
-            return true
-        }
-        // For a window AeroSpace has, say what the tracker thinks of it if it
-        // knows it at all (popup? minimized?), which usually explains it.
-        let aeroText = onlyAeroSpace.map { id -> String in
-            let w = theirs[id]!
-            let ourView = allById[id].map { " (tracker: \($0.kind.rawValue)\($0.minimized ? ", minimized" : ""))" } ?? ""
-            return "\(id) \(w.appName) in \(w.workspace)\(ourView)"
-        }
-        let trackerText = onlyTracker.map { id -> String in
-            let w = allById[id]!
-            return "\(id) \(w.appName) \(w.kind.rawValue) \(w.subrole)\(w.appHidden ? " app hidden" : "")"
-        }
-        let age = refreshedAt.map { "\(Int(Date().timeIntervalSince($0) * 1000)) ms old" } ?? "never refreshed"
-        logInfo("WindowTracker: \(label)\(isRecheck ? "still differs from" : "differs from") AeroSpace (\(theirs.count) vs \(ours.count) windows, tracker list \(age)); only AeroSpace: \(aeroText.isEmpty ? "-" : aeroText.joined(separator: ", ")); only tracker: \(trackerText.isEmpty ? "-" : trackerText.joined(separator: ", "))")
-        return false
     }
 }

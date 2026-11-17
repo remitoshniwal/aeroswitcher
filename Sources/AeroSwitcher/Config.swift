@@ -9,12 +9,13 @@ import Cocoa
 // with `auto-reload-config = true` (see SettingsStore, below). Nothing here
 // needs to change or be rebuilt for that.
 //
-// Two things live in it:
-//   "keybinds"   — which key does what while the switcher panel is open
-//                  (Cmd+Tab itself always opens it; these are what happens
-//                  once it's already up).
-//   "workspaces" — which apps show up as a launcher tile per AeroSpace
-//                  workspace, same idea as the list this replaced.
+// The main parts in it:
+//   "keybinds"      — which key does what while the switcher panel is open
+//                     (Cmd+Tab itself always opens it; these are what
+//                     happens once it's already up).
+//   "workspaces"    — which apps show up as a launcher tile per workspace.
+//   "windowManager" — the workspaces themselves, their Option keys and the
+//                     rules that sort new windows into them.
 //
 // Two safety notes, since a config file is very easy to typo:
 //   - Same rules as AeroSpace's own config: a file that can't be read at
@@ -99,11 +100,10 @@ struct SwitcherConfig: Codable {
     // `auto-reload-config = true`. Optional for the same "older files don't
     // have this key" reason as the two above; nil means on.
     var autoReloadConfig: Bool? = nil
-    // AeroSwitcher's own window manager (Phase 14): its workspaces, the
-    // rules that sort new windows into them, and the maximize settings. Only
-    // used when AeroSwitcher manages windows itself instead of AeroSpace
-    // (see WorkspaceManager.swift). Optional like the others: older files
-    // don't have it. See WindowManagerConfig just below for what's inside.
+    // The window manager (Phase 14): its workspaces, the rules that sort
+    // new windows into them, and the maximize settings (see
+    // WorkspaceManager.swift). Optional like the others: older files don't
+    // have it, and one is added at launch (addWindowManagerSectionIfMissing). See WindowManagerConfig just below for what's inside.
     var windowManager: WindowManagerConfig? = nil
 }
 
@@ -128,7 +128,7 @@ struct SwitcherConfig: Codable {
 //   .aerospace.toml, where the FIRST match wins instead (changed
 //   2026-11-17; for the owner's 19 rules both give the same result).
 // - toggleMaximizeKey: Option+that key flips the focused window between
-//   filling the screen and a centered 70% size (AeroSpace's alt-f).
+//   filling the screen and a centered 70% size.
 // - maximizeNewWindows: every new real window fills the screen. Missing
 //   means yes.
 // Everything is optional so a half-written section still loads; mistakes
@@ -254,12 +254,14 @@ func standaloneIcons(_ config: SwitcherConfig) -> [String: String] {
 // that's never had a config.json before (see loadConfig, below). Deliberately
 // empty rather than any one person's real setup — this same built app might
 // get shared with someone else (a friend, family member, whoever), and their
-// workspace names and apps won't match anyone else's ~/.aerospace.toml, so
+// workspace names and apps won't match anyone else's, so
 // baking in specifics here would just be confusing clutter in a stranger's
 // config file, not a head start. AeroSwitcher_Documentation.md has a filled-in
 // example to copy from instead — the "workspaces" section is entirely
 // optional anyway, everything else still works fine with it empty, you just
-// won't see any greyed-out "not running yet" tiles until you add some.
+// won't see any greyed-out "not running yet" tiles until you add some. (The
+// "windowManager" section is added separately at launch, see
+// addWindowManagerSectionIfMissing.)
 let defaultSwitcherConfig = SwitcherConfig(
     keybinds: KeybindConfig(),
     workspaces: [:],
@@ -584,10 +586,8 @@ struct LoadedSettings {
 // the app restarted. Now:
 //   - Saving config.json reloads it within a moment (if autoReloadConfig
 //     isn't turned off), like AeroSpace with `auto-reload-config = true`.
-//   - `pkill -HUP AeroSwitcher` reloads AeroSwitcher AND AeroSpace together
-//     and shows both results in one window (reloadTogether). That's the
-//     command to bind to a key in .aerospace.toml, and what a menu bar
-//     "Reload config" item will call later.
+//   - `pkill -HUP AeroSwitcher` and the menu's "Reload config" reload it
+//     and show any problems in a window (reloadAndReport).
 //   - A config.json that can't be read keeps the previous settings, a
 //     partly wrong one applies the rest. Either way the problems window
 //     opens, and closes by itself once a save has no problems left.
@@ -654,33 +654,17 @@ final class SettingsStore {
         // switched off first and replaced with a reload.
         signal(SIGHUP, SIG_IGN)
         let source = DispatchSource.makeSignalSource(signal: SIGHUP, queue: .main)
-        source.setEventHandler { [weak self] in self?.reloadTogether() }
+        source.setEventHandler { [weak self] in self?.reloadAndReport() }
         source.resume()
         reloadSignal = source
     }
 
-    // "Reload config" for both apps at once: AeroSwitcher's config.json,
-    // and AeroSpace's ~/.aerospace.toml through `aerospace reload-config
-    // --no-gui` (so AeroSpace doesn't open its own error window too). Both
-    // results end up in the same problems window. AeroSpace's reload runs
-    // off the main thread, it's a separate program and takes a moment.
-    func reloadTogether() {
-        if ownWindowManager {
-            // AeroSwitcher is its own window manager: there is no AeroSpace
-            // config in use, so only config.json is reloaded.
-            logInfo("Reload requested: reloading config.json.")
-            let report = reload()
-            MainActor.assumeIsolated { ConfigProblemsWindow.shared.update(report: report, aerospace: nil) }
-            return
-        }
-        logInfo("Reload requested: reloading config.json and AeroSpace's config together.")
+    // "Reload config": reads config.json again and shows any problems in
+    // the problems window (which closes by itself when there are none).
+    func reloadAndReport() {
+        logInfo("Reload requested: reloading config.json.")
         let report = reload()
-        Task.detached {
-            let aerospaceResult = reloadAeroSpaceConfig()
-            await MainActor.run {
-                ConfigProblemsWindow.shared.update(report: report, aerospace: aerospaceResult)
-            }
-        }
+        MainActor.assumeIsolated { ConfigProblemsWindow.shared.update(report: report) }
     }
 
     // Starts, keeps or stops watching config.json, depending on
@@ -715,7 +699,7 @@ final class SettingsStore {
                 if !lastReport.warnings.contains(message) {
                     lastReport.warning(message)
                     MainActor.assumeIsolated {
-                        ConfigProblemsWindow.shared.update(report: lastReport, aerospace: nil)
+                        ConfigProblemsWindow.shared.update(report: lastReport)
                     }
                 }
             }
@@ -751,7 +735,7 @@ final class SettingsStore {
             logInfo("config.json changed, reloading.")
             let report = self.reload()
             MainActor.assumeIsolated {
-                ConfigProblemsWindow.shared.update(report: report, aerospace: nil)
+                ConfigProblemsWindow.shared.update(report: report)
             }
         }
         pendingAutoReload = work
@@ -906,7 +890,7 @@ func editConfigFile(_ description: String, touching paths: [[String]], shownTree
     // Applied right away, even with autoReloadConfig turned off: that
     // setting is about hand edits, the window's changes always apply.
     let report = settings.reload()
-    ConfigProblemsWindow.shared.update(report: report, aerospace: nil)
+    ConfigProblemsWindow.shared.update(report: report)
     return .saved
 }
 
@@ -1660,32 +1644,56 @@ func windowManagerSectionFromAeroSpaceConfig(atPath path: String) -> [String: An
 }
 
 // Where AeroSpace's config file is, if there is one. Same two places
-// AeroSpace itself looks. (Asking AeroSpace with `config --config-path`
-// would need it running, which it isn't once AeroSwitcher manages windows.)
+// AeroSpace itself looks.
 func aeroSpaceConfigFilePath() -> String? {
     let home = FileManager.default.homeDirectoryForCurrentUser.path
     let candidates = [home + "/.aerospace.toml", home + "/.config/aerospace/aerospace.toml"]
     return candidates.first { FileManager.default.fileExists(atPath: $0) }
 }
 
-// Once, at launch: if config.json has no "windowManager" section yet and
-// AeroSpace's config exists, the section is filled in from it, so the
-// Workspaces tab in Settings starts with the owner's real setup. Never
-// touches a section that is already there, even an empty one (that is the
-// owner's own choice). Main thread.
+// The workspaces a brand new user starts with, when there is no AeroSpace
+// config to copy from: four plain names on Option+1 to Option+4, Option+F
+// to toggle a window between full screen size and a smaller one, and every
+// new window made to fill the screen. All of it can be changed in Settings >
+// Workspaces; change the names or keys here to give new users a different
+// start.
+let starterWindowManagerSection: [String: Any] = [
+    "workspaces": [
+        ["name": "Main", "key": "1"],
+        ["name": "Work", "key": "2"],
+        ["name": "Personal", "key": "3"],
+        ["name": "Extra", "key": "4"],
+    ],
+    "rules": [[String: Any]](),
+    "toggleMaximizeKey": "f",
+    "maximizeNewWindows": true,
+]
+
+// Once, at launch: if config.json has no "windowManager" section yet, one
+// is added. Someone coming from AeroSpace gets their workspaces, keys and
+// app rules copied from their AeroSpace config (only read, never changed);
+// anyone else gets the starter set above. Without workspaces the window
+// manager has nothing to do and stays paused. Never touches a section that
+// is already there, even an empty one (that is the user's own choice).
+// Main thread.
 @MainActor
-func importWindowManagerSectionIfMissing() {
+func addWindowManagerSectionIfMissing() {
     let snapshot = readConfigSnapshot()
     guard let tree = snapshot.tree, tree["windowManager"] == nil else { return }
-    guard let path = aeroSpaceConfigFilePath(),
-          let section = windowManagerSectionFromAeroSpaceConfig(atPath: path) else { return }
+    let path = aeroSpaceConfigFilePath()
+    let imported = path.flatMap { windowManagerSectionFromAeroSpaceConfig(atPath: $0) }
+    let section = imported ?? starterWindowManagerSection
     let workspaces = (section["workspaces"] as? [Any])?.count ?? 0
     let rules = (section["rules"] as? [Any])?.count ?? 0
-    let outcome = editConfigFile("import the window manager rules from AeroSpace's config",
-                                 touching: [["windowManager"]], shownTree: tree) { tree in
+    let what = imported != nil ? "copy the workspaces from AeroSpace's config" : "add the starter workspaces"
+    let outcome = editConfigFile(what, touching: [["windowManager"]], shownTree: tree) { tree in
         tree["windowManager"] = section
     }
     if case .saved = outcome {
-        logInfo("Imported \(workspaces) workspaces and \(rules) app rules from \(path) into config.json (windowManager). AeroSpace's file was only read.")
+        if let path, imported != nil {
+            logInfo("Copied \(workspaces) workspaces and \(rules) app rules from \(path) into config.json (windowManager). AeroSpace's file was only read.")
+        } else {
+            logInfo("Added the \(workspaces) starter workspaces to config.json (windowManager).")
+        }
     }
 }

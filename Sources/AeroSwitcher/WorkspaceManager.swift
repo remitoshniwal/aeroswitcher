@@ -1,15 +1,11 @@
 import AppKit
 
-// MARK: - Own window manager (Phase 14, B2 to B6)
+// MARK: - Window manager (Phase 14)
 
-// This file is AeroSwitcher being its own window manager, the job the
-// separate app AeroSpace did before: there are a few named WORKSPACES (Core,
+// This file is AeroSwitcher's window manager, the job the separate app
+// AeroSpace did before version 1.0: there are a few named WORKSPACES (Core,
 // School, ...), every window belongs to exactly one, the windows of one
 // workspace are on screen and the windows of all the others are hidden.
-//
-// It only does anything when AeroSwitcher is set to manage windows itself
-// (`ownWindowManager`, right below). Otherwise AeroSpace does the job and
-// nothing in this file runs, apart from the small rescue at launch.
 //
 // How a window is "hidden". macOS has no way to make another app's window
 // invisible, so AeroSpace's trick is used (copied from its hideInCorner and
@@ -25,7 +21,7 @@ import AppKit
 //   - When AeroSwitcher quits (menu, pkill, Ctrl+C), every parked window is
 //     moved back first.
 //   - If AeroSwitcher crashes, the next launch reads the file and carries
-//     on (or, if it is no longer the window manager, moves them all back).
+//     on.
 //   - "Bring Back All Windows" in the menu puts every window on screen in
 //     the workspace you are in, including ones this file lost track of.
 //   - It refuses to manage windows while AeroSpace is running: two window
@@ -58,20 +54,8 @@ import AppKit
 // at their real remembered position instead of a proportional one, and the
 // remembered positions are kept in a file so a crash can't lose them.
 
-// true = AeroSwitcher manages windows itself and AeroSpace is not used at
-// all. Decided once at launch and never changed while running (switching is
-// done in the Setup window, which restarts AeroSwitcher). Stored in
-// UserDefaults as "OwnWindowManager". A test copy (one started with
-// AEROSWITCHER_CONFIG_DIR) ignores the stored setting, which belongs to the
-// real app, and only looks at AEROSWITCHER_OWN_WM=1.
-let ownWindowManager: Bool = {
-    let environment = ProcessInfo.processInfo.environment
-    if environment["AEROSWITCHER_CONFIG_DIR"] != nil {
-        return environment["AEROSWITCHER_OWN_WM"] == "1"
-    }
-    return UserDefaults.standard.bool(forKey: "OwnWindowManager")
-}()
-
+// AeroSpace's app ID. AeroSwitcher pauses while AeroSpace runs (see
+// currentPauseReason): two window managers would fight over every window.
 let aeroSpaceBundleId = "bobko.aerospace"
 
 // TEST ONLY, and only in a test copy (AEROSWITCHER_CONFIG_DIR set): a list of
@@ -212,9 +196,8 @@ final class WorkspaceManager: @unchecked Sendable {
         return snapshot.focusedWorkspace
     }
 
-    // Every managed window, in the shape the rest of the app already uses
-    // for AeroSpace's answers, so Cmd+Tab, the overview and the menu don't
-    // care who the window manager is (see AeroSpaceBridge.swift).
+    // Every managed window, in the shape the rest of the app uses (see
+    // WindowList.swift).
     func windowsSnapshot() -> [AeroWindow] {
         lock.lock()
         defer { lock.unlock() }
@@ -227,20 +210,12 @@ final class WorkspaceManager: @unchecked Sendable {
         return snapshot.focusedWindow
     }
 
-    // Remembers the choice for the NEXT launch. Restarting is the caller's
-    // job (the Setup window does it).
-    static func setOwnMode(_ on: Bool) {
-        UserDefaults.standard.set(on, forKey: "OwnWindowManager")
-        logInfo("WorkspaceManager: own window manager set to \(on ? "on" : "off") for the next launch")
-    }
-
     // MARK: Start
 
     // Called once at launch from main.swift, BEFORE the window tracker
-    // starts (it hooks into the tracker's updates). Main thread. Does
-    // nothing unless AeroSwitcher is its own window manager.
+    // starts (it hooks into the tracker's updates). Main thread.
     func start() {
-        guard ownWindowManager, !started else { return }
+        guard !started else { return }
         started = true
         startedAt = Date()
         ScreenLayout.shared.start()
@@ -290,7 +265,7 @@ final class WorkspaceManager: @unchecked Sendable {
         }
 
         startTestCommands()
-        logInfo("WorkspaceManager: AeroSwitcher is its own window manager"
+        logInfo("WorkspaceManager: started"
             + (testOnlyApps.map { " (TEST: only windows of \($0.sorted().joined(separator: ", ")))" } ?? ""))
         // Not decided yet: the first update of the window list (a moment
         // after launch) decides whether to manage. If the list never comes
@@ -344,7 +319,7 @@ final class WorkspaceManager: @unchecked Sendable {
                     // click, and the update must finish first.
                     DispatchQueue.main.async {
                         showFailureAlert("AeroSwitcher stopped managing windows",
-                            "AeroSpace was started, and two window managers would fight over your windows. All windows are back on screen. Quit AeroSpace to let AeroSwitcher carry on, or go back to AeroSpace in AeroSwitcher's Setup window.")
+                            "AeroSpace is running, and two window managers would fight over your windows. All windows are back on screen. Quit AeroSpace (and remove it from Login Items) to let AeroSwitcher carry on.")
                     }
                 }
             }
@@ -421,8 +396,7 @@ final class WorkspaceManager: @unchecked Sendable {
                 continue
             }
             if let saved = savedAtLaunch?.windows[String(id)], names.contains(saved.workspace) {
-                // AeroSwitcher was managing before this launch (or AeroSpace
-                // was, see seedFromAeroSpace): the window keeps its
+                // AeroSwitcher was managing before this launch: the window keeps its
                 // workspace, and if it is still parked from then, where it
                 // goes back to. Looked at for the first minute, not only the
                 // first update: an app that answers slowly at launch shows
@@ -956,71 +930,6 @@ final class WorkspaceManager: @unchecked Sendable {
         }
         logInfo("WorkspaceManager: quitting, moved \(moved.count) of \(parkedNow.count) parked windows back on screen")
         flushLog()
-    }
-
-    // MARK: Switching over
-
-    // Called by the Setup window right before AeroSwitcher restarts as its
-    // own window manager, with AeroSpace's last answer (which window is in
-    // which workspace, and the workspace showing). Written as the window
-    // file, so the first launch in the new mode keeps every window in the
-    // workspace AeroSpace had it in, instead of sorting all of them again
-    // by the rules (a window you moved by hand would otherwise jump back).
-    static func seedFromAeroSpace(windows: [AeroWindow], focusedWorkspace: String?) {
-        var entries: [String: SavedState.Window] = [:]
-        for window in windows where !window.workspace.isEmpty {
-            entries[window.id] = SavedState.Window(workspace: window.workspace, pid: window.appPID, parked: nil, restored: nil)
-        }
-        let state = SavedState(bootTime: bootTime(), focusedWorkspace: focusedWorkspace ?? "", windows: entries)
-        var last: Data?
-        write(state, last: &last)
-        logInfo("WorkspaceManager: took over AeroSpace's workspaces for \(entries.count) windows, showing \(focusedWorkspace ?? "?")")
-    }
-
-    // Called by the Setup window before going back to AeroSpace: every parked
-    // window back on screen, workspaces kept (AeroSpace sorts them its own
-    // way when it starts). Main thread.
-    func putAllWindowsOnScreen() {
-        let count = unparkAll()
-        logInfo("WorkspaceManager: handing over to AeroSpace, moved \(count) parked windows back on screen")
-    }
-
-    // MARK: Rescue when AeroSwitcher is NOT the window manager
-
-    // Called at launch from main.swift when AeroSpace is the window manager.
-    // If a file is left from a time AeroSwitcher managed windows and it
-    // still lists parked windows (AeroSwitcher crashed, then was switched
-    // back), they are moved back on screen once the window list is ready,
-    // and the file is removed. Normally there is no file and this does
-    // nothing.
-    static func rescueLeftovers() {
-        guard !ownWindowManager else { return }
-        guard let state = loadState() else {
-            try? FileManager.default.removeItem(at: stateFileURL())
-            return
-        }
-        let leftovers = state.windows.compactMap { key, window -> (CGWindowID, pid_t, CGPoint)? in
-            guard let id = CGWindowID(key), let frame = window.parked else { return nil }
-            return (id, window.pid, CGPoint(x: frame.x, y: frame.y))
-        }
-        guard !leftovers.isEmpty else {
-            try? FileManager.default.removeItem(at: stateFileURL())
-            return
-        }
-        logWarn("WorkspaceManager: \(leftovers.count) windows were left parked by an earlier run, moving them back on screen")
-        ScreenLayout.shared.start()
-        WindowTracker.shared.onRefresh = {
-            WindowTracker.shared.onRefresh = nil
-            for (id, pid, origin) in leftovers {
-                WindowTracker.shared.act(pid: pid, windowId: id, { element, app in
-                    // Only if it really is still in the corner: AeroSpace
-                    // may have taken it over and moved it since.
-                    guard let frame = axFrame(element), ScreenLayout.shared.looksParked(frame) else { return }
-                    axWithoutAnimations(app: app) { axSetPosition(element, origin) }
-                })
-            }
-            try? FileManager.default.removeItem(at: stateFileURL())
-        }
     }
 
     // MARK: Test commands (test copy only)

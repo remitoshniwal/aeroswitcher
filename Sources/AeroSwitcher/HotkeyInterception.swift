@@ -112,18 +112,14 @@ class HotkeyManager {
             return Unmanaged.passRetained(event)
         }
 
-        // AeroSwitcher only has business with Cmd+Tab and whatever happens
-        // while Cmd is held afterward. AeroSpace's own shortcuts (workspace
-        // switching, window moving, all of ~/.aerospace.toml) are all
-        // Option-based, and this app should never be anywhere near those —
-        // so anything with Option held is handed straight back untouched,
-        // before any other logic below even looks at it.
+        // Option keys belong to the window manager: Option+workspace key
+        // switches, Option+Shift+key moves a window, Option+toggle key
+        // resizes (handleWindowManagerKey, below). Any other key with
+        // Option held is handed straight back untouched, before any other
+        // logic below even looks at it, so Option shortcuts in other apps
+        // and typing special characters keep working.
         if event.flags.contains(.maskAlternate) {
-            // Phase 14: when AeroSwitcher is its own window manager, the
-            // Option keys AeroSpace used to have are AeroSwitcher's now
-            // (handleWindowManagerKey, below). Everything else with Option
-            // still goes straight through untouched.
-            if ownWindowManager, type == .keyDown, handleWindowManagerKey(event) {
+            if type == .keyDown, handleWindowManagerKey(event) {
                 return nil
             }
             return Unmanaged.passRetained(event)

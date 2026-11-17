@@ -2,40 +2,27 @@ import Cocoa
 
 // MARK: - Most-recently-used tracking
 
-// AeroSpace itself already knows exactly when any window gets focus, down
-// to the specific window ID (see the on-focus-changed line in
-// ~/.aerospace.toml). Reading that is far more reliable than us trying to
-// guess from app-level activation, it works correctly even for two windows
-// of the exact same app.
+// The window manager (WorkspaceManager.swift) reports every focus change
+// with the exact window number and its workspace (recordFocus, below), which
+// is far more reliable than guessing from app-level activation: it works
+// even for two windows of the exact same app.
 //
-// One small log file PER WORKSPACE, under /tmp/aerospace-mru/, rather than
-// one shared file for the whole Mac. AeroSpace's hook only ever hands us
-// the window ID directly, not which workspace it's in, so the hook itself
-// asks `aerospace list-workspaces --focused` to figure out which file to
-// append to. Splitting it this way isn't just about file size, it fixes a
-// real correctness issue too: with one shared history, heavy switching in
-// whatever workspace you're using right now could crowd out an older,
-// less-visited workspace's own recency order entirely. Keeping each
-// workspace's history separate means that can't happen, each one only
-// ever competes with its own past, not everyone else's.
+// One small log file PER WORKSPACE, under /tmp/aeroswitcher-recent/, rather
+// than one shared file for the whole Mac. With one shared history, heavy
+// switching in whatever workspace you're using right now could crowd out an
+// older, less-visited workspace's own recency order entirely. Keeping each
+// workspace's history separate means that can't happen, each one only ever
+// competes with its own past, not everyone else's.
 class MRUTracker {
-    private let logDir = "/tmp/aerospace-mru"
-
     // Each workspace's own log file grows by one line every focus change
-    // within it, forever, with nothing on the AeroSpace side to trim it.
+    // within it.
     // We only ever care about the most recent handful of window IDs
     // anyway, so this is both how many we keep AND the cue for when it's
     // worth rewriting a file back down to size.
     private let maxRemembered = 300
 
-    private func logPath(for workspace: String) -> String {
-        "\(logDir)/\(workspace).log"
-    }
-
-    // AeroSwitcher's own history, written from the `focus-changed` events of
-    // `aerospace subscribe` (see recordFocus). Same format as the hook's
-    // logs: one window id per line, newest last. Also in /tmp on purpose:
-    // window ids mean nothing after a restart, and /tmp is emptied then.
+    // One window id per line, newest last. In /tmp on purpose: window ids
+    // mean nothing after a restart, and /tmp is emptied then.
     private let ownLogDir = "/tmp/aeroswitcher-recent"
     private let writeQueue = DispatchQueue(label: "aeroswitcher.recent-history", qos: .utility)
 
@@ -45,7 +32,7 @@ class MRUTracker {
 
     // Called for every focus event. The file write happens off the main
     // thread (that thread also runs the Cmd+Tab hook). A workspace name with
-    // a slash in it can't be a file name, the hook has the same limit.
+    // a slash in it can't be a file name.
     func recordFocus(windowID: String, workspace: String) {
         guard !windowID.isEmpty, !workspace.isEmpty, !workspace.contains("/") else { return }
         let dir = ownLogDir
@@ -63,29 +50,8 @@ class MRUTracker {
         }
     }
 
-    private func modificationDate(_ path: String) -> Date? {
-        (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
-    }
-
-    // Which history to read. Both can exist: the hook's log (if the owner's
-    // .aerospace.toml has the line) and AeroSwitcher's own. Both record the
-    // same events, so the one written to most recently is the complete one:
-    // if the hook line is removed, the hook log stops growing and the own
-    // one takes over; if AeroSwitcher was not running for a while, the hook
-    // log is the one that kept going. Neither exists: no history yet.
-    private func historyPath(for workspace: String) -> String {
-        let hook = logPath(for: workspace)
-        let own = ownLogPath(for: workspace)
-        switch (modificationDate(hook), modificationDate(own)) {
-        case (nil, nil): return hook
-        case (_, nil): return hook
-        case (nil, _): return own
-        case let (hookDate?, ownDate?): return ownDate > hookDate ? own : hook
-        }
-    }
-
     private func recentWindowIDs(workspace: String) -> [String] {
-        recentWindowIDs(atPath: historyPath(for: workspace))
+        recentWindowIDs(atPath: ownLogPath(for: workspace))
     }
 
     private func recentWindowIDs(atPath path: String) -> [String] {
@@ -117,7 +83,7 @@ class MRUTracker {
 
     // Puts the most recently focused window(s) first, by actual window ID,
     // using just THIS workspace's own history. Anything we've never seen
-    // focus falls back to AeroSpace's own order, at the end. If we don't
+    // focus falls back to the window list's own order, at the end. If we don't
     // know the workspace (shouldn't normally happen), skip reordering
     // entirely rather than guessing.
     func sorted(_ windows: [AeroWindow], workspace: String?) -> [AeroWindow] {
@@ -127,10 +93,6 @@ class MRUTracker {
         // newest window is never missing from the history that's read.
         writeQueue.sync {}
         let recent = recentWindowIDs(workspace: workspace)
-        // Which history was read, so it can be seen in the log. When both
-        // exist they hold the same ids, the own file is just the hook's
-        // file without the shell.
-        logDebug("Recent order \(workspace): using \(historyPath(for: workspace) == ownLogPath(for: workspace) ? "AeroSwitcher's own" : "the hook's") history")
         func rank(_ id: String) -> Int {
             recent.firstIndex(of: id) ?? Int.max
         }

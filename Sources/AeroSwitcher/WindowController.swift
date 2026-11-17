@@ -338,34 +338,18 @@ class SwitcherWindowController: NSObject {
             guard #available(macOS 14.0, *) else { sessionActive = false; return }
             let startedAt = Date()
 
-            // Asking AeroSpace for the window list (a subprocess), asking
-            // ScreenCaptureKit for its shareable-content snapshot, and
-            // asking AeroSpace which workspace is focused don't depend on
-            // each other, so kick off all three at once instead of waiting
-            // for one to finish before starting the next. The AeroSpace
-            // calls also run off the main actor so the subprocess wait
-            // can't stall the UI.
+            // The window list (every window and which workspace is focused,
+            // getWindowsWithFocus in WindowList.swift, an instant in-memory
+            // copy from the window manager) and ScreenCaptureKit's
+            // shareable-content snapshot don't depend on each other, so both
+            // start at once. macOS's list was usually already asked for the
+            // moment Cmd went down (prefetchLists, above) and is ready by
+            // now.
             //
-            // macOS's list was usually already asked for the moment Cmd went
-            // down (prefetchLists, above) and is ready by now. AeroSpace is
-            // always asked fresh, see the MARK above for why.
-            //
-            // Only ONE question goes to AeroSpace first: AeroSpace answers
-            // questions one after another, so asking three at once (this
-            // window list, the workspace name, every workspace's windows)
-            // made this first answer wait for the others. Measured
-            // 2026-11-04: one question alone about 20 ms, three at once about
-            // 33 ms. The workspace name is already in each window's line of
-            // this list, and the every-workspace list is only needed after
-            // the screenshots, so it starts once this answer is in.
-            //
-            // Changed 2026-11-05: that ONE question is now "every window,
-            // and which workspace is focused" (getWindowsWithFocus,
-            // AeroSpaceBridge.swift), which answers both at once. In normal
-            // use it costs the same (~25 ms). Right after a slide to or from
-            // a full screen game AeroSpace answered each question slowly
-            // (70 to 860 ms), and the second question alone added about
-            // half a second. If it fails, the old two questions are asked.
+            // Until 1.0 the window list came from AeroSpace's command line
+            // tool, which took 20 to 45 ms (up to 860 ms right after a full
+            // screen game). The early screenshots and the fallbacks below
+            // were built for that and are harmless now.
             let early = takePrefetch()
             let windowListTask = Task.detached { getWindowsWithFocus() }
             let contentTask = early?.content ?? Self.fetchShareableContent()
@@ -431,7 +415,7 @@ class SwitcherWindowController: NSObject {
             // and Tab, and a window missing from it gets no card at all. So
             // if AeroSpace lists a window the early list doesn't have, ask
             // macOS again (costs the old 40 to 60 ms, only in that case).
-            var listsSource = (early == nil ? "fresh" : "early macOS list") + (oneAnswer == nil ? ", AeroSpace asked twice" : "")
+            var listsSource = (early == nil ? "fresh" : "early macOS list") + (oneAnswer == nil ? ", window list asked twice" : "")
             if early != nil, let known = content {
                 let knownIDs = Set(known.windows.map { String($0.windowID) })
                 if !rawWindows.allSatisfy({ knownIDs.contains($0.id) }) {
@@ -460,12 +444,6 @@ class SwitcherWindowController: NSObject {
             // For the next Cmd+Tab's early screenshots (guessedWindowIDs).
             self.lastAllWindows = allWindows
             if let workspaceName { self.lastFocusedWorkspace = workspaceName }
-            // Phase 14 B1: does AeroSwitcher's own window list (WindowTracker
-            // .swift) agree with AeroSpace's? Only writes a log line, in the
-            // background, so this press doesn't get slower. Uses AeroSpace's
-            // answer from this same press, so it costs no extra question
-            // (only a difference asks once more, 1 s later).
-            WindowTracker.shared.checkAgainstAeroSpace(allWindows)
             // Apps running with no window anywhere AND no config entry in
             // any workspace — added on top of your configured tiles rather
             // than replacing them, so a genuinely homeless running app is
@@ -484,7 +462,7 @@ class SwitcherWindowController: NSObject {
 
             // Truly nothing to show at all — no real windows, no launcher
             // tiles either. Only now is there actually nothing to open for.
-            logInfo("Switcher: workspace \(workspaceName), AeroSpace windows \(rawWindows.count), thumbnails \(loaded.count), launcher tiles \(self.launcherItems.count), took \(Int(Date().timeIntervalSince(startedAt) * 1000)) ms (window lists \(listsMs) ms \(listsSource), screenshots \(screenshotsMs) ms, \(usedEarly) of \(windows.count) started early, \(lateCount) late)")
+            logInfo("Switcher: workspace \(workspaceName), windows \(rawWindows.count), thumbnails \(loaded.count), launcher tiles \(self.launcherItems.count), took \(Int(Date().timeIntervalSince(startedAt) * 1000)) ms (window lists \(listsMs) ms \(listsSource), screenshots \(screenshotsMs) ms, \(usedEarly) of \(windows.count) started early, \(lateCount) late)")
             guard !loaded.isEmpty || !self.launcherItems.isEmpty else {
                 logWarn("Switcher: nothing to show (no windows with thumbnails, no launcher tiles), not opening")
                 sessionActive = false

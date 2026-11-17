@@ -688,10 +688,7 @@ private struct WorkspaceAppIcon: View {
 
 // MARK: - Config problems window
 //
-// The small window that lists what's wrong with config.json (and, after a
-// "reload both" from `pkill -HUP AeroSwitcher`, with AeroSpace's config
-// too). Same idea as the window AeroSpace itself opens when its config has
-// errors. Before this, every problem was only print()ed, which nobody sees
+// The small window that lists what's wrong with config.json. Before this, every problem was only print()ed, which nobody sees
 // unless the app was started from Terminal.
 //
 // It's an ordinary window, but on purpose:
@@ -699,8 +696,8 @@ private struct WorkspaceAppIcon: View {
 //     activate), so saving config.json in your editor doesn't yank you out
 //     of the editor. Click it to use it.
 //   - It can't be resized, which also means it has no working green full
-//     screen button, so maximize.applescript leaves it alone when AeroSpace
-//     notices it (see the dialog check in that script).
+//     screen button, so the window manager doesn't make it fill the screen
+//     (see isRealWindow in WindowSizing.swift).
 //   - It closes by itself after a reload with no problems left.
 
 struct ConfigProblemSection: Identifiable {
@@ -738,7 +735,7 @@ struct ConfigProblemsView: View {
             }
             HStack {
                 Button("Open config.json", action: openConfig)
-                // Same as `pkill -HUP AeroSwitcher`: reloads both configs.
+                // Same as `pkill -HUP AeroSwitcher`: reads config.json again.
                 Button("Reload", action: reload)
                 Spacer()
                 Button("Close", action: close).keyboardShortcut(.cancelAction)
@@ -755,10 +752,7 @@ final class ConfigProblemsWindow {
     private var window: NSWindow?
 
     // Shows, refreshes or closes the window to match the latest reload.
-    // `aerospace` is nil when AeroSpace wasn't reloaded this time (a plain
-    // save of config.json, or app launch), so only AeroSwitcher's own
-    // problems count then.
-    func update(report: ConfigReport, aerospace: AeroSpaceReloadResult?) {
+    func update(report: ConfigReport) {
         var sections: [ConfigProblemSection] = []
         if !report.errors.isEmpty {
             sections.append(ConfigProblemSection(
@@ -773,21 +767,6 @@ final class ConfigProblemsWindow {
                 summary: "Everything else was applied. Each item below fell back to its default.",
                 lines: report.warnings))
         }
-        // The aerospace command says "Can't connect to AeroSpace server"
-        // when AeroSpace isn't running at all. That's not a config problem,
-        // so it gets its own title instead of a misleading one.
-        if let aerospace, !aerospace.ok, aerospace.output.contains("Can't connect to AeroSpace server") {
-            sections.append(ConfigProblemSection(
-                title: "AeroSpace isn't running",
-                summary: "AeroSwitcher couldn't reach AeroSpace to reload its config. Open AeroSpace, then reload again.",
-                lines: [aerospace.output]))
-        } else if let aerospace, !aerospace.ok {
-            sections.append(ConfigProblemSection(
-                title: "AeroSpace's config has problems",
-                summary: "This is ~/.aerospace.toml, reloaded together with config.json. AeroSpace keeps its previous config while there are errors.",
-                lines: [aerospace.output.isEmpty ? "aerospace reload-config failed without saying why." : aerospace.output]))
-        }
-
         guard !sections.isEmpty else {
             window?.close()
             return
@@ -799,7 +778,7 @@ final class ConfigProblemsWindow {
         let view = ConfigProblemsView(
             sections: sections,
             openConfig: { NSWorkspace.shared.open(configFileURL()) },
-            reload: { settings.reloadTogether() },
+            reload: { settings.reloadAndReport() },
             close: { [weak self] in self?.window?.close() })
         if let window {
             window.contentView = NSHostingView(rootView: view)

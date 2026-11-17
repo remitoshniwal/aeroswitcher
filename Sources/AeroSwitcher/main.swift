@@ -49,7 +49,7 @@ if ProcessInfo.processInfo.environment["AEROSWITCHER_CONFIG_DIR"] == nil,
 // MARK: - Start-up order
 //
 // This app used to be one big main.swift, and it's now split into one file
-// per section (AeroSpaceBridge.swift, Config.swift, Views.swift, and so on).
+// per section (WindowList.swift, Config.swift, Views.swift, and so on).
 // That split changes one subtle thing, which these lines undo:
 //
 // Shared values like `appConfig` are worked out differently depending on
@@ -66,7 +66,6 @@ if ProcessInfo.processInfo.environment["AEROSWITCHER_CONFIG_DIR"] == nil,
 // split. If you add a new shared `let` in another file that does real work
 // when it's created (reads a file, prints, loads images), add it here too.
 _ = appLogger  // already used above, listed so the rule is visible: it opens the log file
-_ = aerospacePath
 _ = cardSize
 _ = displayScale
 _ = captureScale
@@ -76,7 +75,6 @@ _ = terminalNewWindowScript
 _ = defaultSwitcherConfig
 _ = settings  // reads config.json (launcher tiles, custom icons, keybinds), see SettingsStore
 _ = knownApps  // reads the KnownApps files inside the app (Config.swift)
-_ = ownWindowManager  // reads the OwnWindowManager setting (WorkspaceManager.swift)
 
 // MARK: - App entry
 
@@ -114,46 +112,29 @@ Task { @MainActor in
         c.noteFocusedWorkspace(workspace)
     })
 
-    // Phase 14 B1: AeroSwitcher's own window list, watch only (it only
-    // writes a "WindowTracker:" line to the log at each Cmd+Tab, nothing on
-    // screen changes). Started after the hotkeys so Cmd+Tab works first;
-    // the slow part (the first contact with every app) runs in the
-    // background. See WindowTracker.swift, and its off switch there.
-    // Phase 14: AeroSwitcher's own window manager (WorkspaceManager.swift).
-    // The rules come from config.json; the first time, they are copied in
-    // from AeroSpace's config (only read, never changed), so they're there
-    // when the owner switches over in the Setup window.
-    importWindowManagerSectionIfMissing()
-    if ownWindowManager {
-        // Hooks into the window list, so it starts BEFORE the tracker.
-        WorkspaceManager.shared.start()
-    } else {
-        // AeroSpace is in charge. If an earlier run of AeroSwitcher's own
-        // window manager left windows parked off screen, put them back.
-        WorkspaceManager.rescueLeftovers()
-    }
+    // The window manager (WorkspaceManager.swift) and the live window list
+    // it works from (WindowTracker.swift). Started after the hotkeys so
+    // Cmd+Tab works first; the slow part (the first contact with every app)
+    // runs in the background. The workspaces and rules come from
+    // config.json; if it has none yet, they are copied in once from an
+    // AeroSpace config if there is one (only read, never changed), else a
+    // starter set is written (Config.swift).
+    addWindowManagerSectionIfMissing()
+    // Hooks into the window list, so it starts BEFORE the tracker.
+    WorkspaceManager.shared.start()
     WindowTracker.shared.start()
 
-    // From here on, saving config.json reloads it, and `pkill -HUP
-    // AeroSwitcher` reloads it together with AeroSpace's config.
+    // From here on, saving config.json reloads it, and so does `pkill -HUP
+    // AeroSwitcher`.
     settings.startWatching()
-    // Checks AeroSpace and the permissions, and opens the setup window on a
+    // Checks the permissions and the window manager, and opens the setup window on a
     // first launch or when something required is missing (SetupHelp.swift).
     SetupHelp.shared.launchCheck()
     // Anything wrong in config.json at launch gets the same window a
     // reload would show, instead of only a print nobody sees.
-    ConfigProblemsWindow.shared.update(report: settings.lastReport, aerospace: nil)
+    ConfigProblemsWindow.shared.update(report: settings.lastReport)
     // TEST ONLY, see testSettingsTab (SettingsWindow.swift).
     if testSettingsTab() != nil { SettingsWindow.shared.show() }
-}
-
-// AeroSpace's version goes into the log too (asked in the background, it's a
-// separate program and can take a moment, and start-up must never wait for it).
-// Not with AeroSwitcher's own window manager: AeroSpace isn't used then.
-if !ownWindowManager {
-    Task.detached {
-        logInfo(getAeroSpaceVersionText().replacingOccurrences(of: "\n", with: ", "))
-    }
 }
 
 app.run()

@@ -1,250 +1,100 @@
-# Installing AeroSwitcher, from a blank Mac
+# Installing AeroSwitcher
 
-This is a start-to-finish setup guide: nothing installed yet, ending with AeroSwitcher running quietly in the background every time you log in. If you already have Homebrew or AeroSpace, skip straight to whichever step you still need.
+AeroSwitcher is one app: workspaces, a window manager that shows one workspace at a time, and a Cmd+Tab that only shows that workspace. Nothing else needs to be installed. You need macOS 14 (Sonoma) or newer, on an Apple silicon or Intel Mac.
 
-Do these roughly in order, each step depends on the one before it.
+There are two ways to get it: download the ready-made app (part A), or build it yourself from the source code (part B). Both end with the same steps (part C).
 
-## 1. Install Homebrew
+## A. Download the app
 
-Homebrew is a package manager, basically an app store you run from Terminal, that both AeroSpace and a few build tools come through.
+1. Open the [latest release](https://github.com/remitoshniwal/aeroswitcher/releases/latest) and download `AeroSwitcher-1.0.0.zip` (the number may be higher).
+2. Double-click the zip in your Downloads folder. It unzips to **AeroSwitcher**.
+3. Drag **AeroSwitcher** into your **Applications** folder. Launch at login only works from there.
+4. Double-click it. macOS says it can't check AeroSwitcher for malicious software. That is because the app isn't signed by a paid Apple Developer account, not because something is wrong with it. Click **Done**. Don't click Move to Trash.
+5. Open **System Settings > Privacy & Security**, scroll down to the message that AeroSwitcher was blocked, and click **Open Anyway**. Confirm with your password or Touch ID. macOS remembers this, so it's only needed once per version.
 
-Check if you already have it:
+(The old trick of right-clicking the app and choosing **Open** no longer works for apps like this on recent macOS.)
 
-```
-brew --version
-```
+Go on with part C.
 
-If that prints a version number, skip to step 2. If it says "command not found," open Terminal (Cmd+Space, type Terminal, Enter) and run:
+## B. Build it yourself
 
-```
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-```
+**B1. Install Xcode Command Line Tools** (once). In Terminal:
 
-This downloads and runs Homebrew's official installer. It'll ask for your Mac password partway through (needed to install into `/opt/homebrew`), that's normal. At the end, it usually prints two lines starting with `echo` and telling you to add Homebrew to your PATH, run exactly those lines if it shows them, then close and reopen Terminal.
-
-Confirm it worked:
-
-```
-brew --version
+```bash
+xcode-select --install
 ```
 
-## 2. Install AeroSpace
+**B2. Optional but recommended: create a code signing certificate** (once, before the first build).
 
-AeroSpace is the actual window manager, it does the tiling, workspaces, and window switching underneath. AeroSwitcher and the config talked about later are both just building on top of it, so this has to exist first.
-
-```
-brew install --cask nikitabobko/tap/aerospace
-```
-
-The first time you launch it (Applications folder, or `open -a AeroSpace` in Terminal), macOS will ask you to confirm you trust it, since it's not from the App Store. Approve it.
-
-AeroSpace also needs **Accessibility** permission to move and resize windows at all, this is separate from AeroSwitcher's own permissions later. macOS should prompt for this the first time AeroSpace tries to do anything. If it doesn't prompt, add it manually:
-
-**System Settings > Privacy & Security > Accessibility** → click the "+" button → find AeroSpace in Applications → enable its toggle.
-
-## 3. Set up `~/.aerospace.toml`
-
-This file is AeroSpace's own config, workspaces, keybindings, and (once you get to it below) the auto-maximize behavior all live here. AeroSpace looks for it at `~/.aerospace.toml` specifically, that's a fixed location, not something you can rename or move.
-
-If you already have a working `.aerospace.toml` from this project, just put it there:
-
-```
-cp /path/to/your/.aerospace.toml ~/.aerospace.toml
-```
-
-(`~` is shorthand for your home folder, `/Users/yourname`.)
-
-Restart AeroSpace after this (quit it fully and reopen, or `killall AeroSpace && open -a AeroSpace`) so it picks up the file for the first time. After that, `auto-reload-config = true` in the file means every future save applies instantly, no more restarts needed.
-
-**Quick sanity check** it loaded correctly: press one of the workspace-switching keys from the config (`alt-q` in this setup). If your screen's active app changes or the menu bar workspace name changes, it worked.
-
-## 4. Create the AeroSpace scripts folder
-
-The fullscreen/maximize toggle (`alt-f` in the config) depends on three small script files living in a specific folder:
-
-```
-mkdir -p "$HOME/Library/Application Support/AeroSpace"
-```
-
-Then put these three files in it, exactly as named:
-
-- `maximize.applescript`
-- `restore.applescript`
-- `toggle-maximize.sh`
-
-If you're copying these from elsewhere, make sure `toggle-maximize.sh` is executable:
-
-```
-chmod +x "$HOME/Library/Application Support/AeroSpace/toggle-maximize.sh"
-```
-
-**Important**: `.aerospace.toml` finds this folder through `$HOME` (`"$HOME/Library/Application Support/AeroSpace"`) in several places. AeroSpace runs those commands with bash, which fills in your own home folder, so the file works under any user name. A plain `~` would not work there, because bash doesn't expand it inside quotes. The folder name has to stay exactly `AeroSpace`, under `Library/Application Support` in your home folder. If you put the scripts somewhere else, change the path in every place the file mentions it, otherwise the scripts silently won't be found. `grep "Application Support/AeroSpace" ~/.aerospace.toml` shows you every line.
-
-## 5. Build AeroSwitcher
-
-AeroSwitcher is the actual switcher app, the Cmd+Tab replacement. It's built from source, since it's a personal project and not something Apple's signed and notarized for wide distribution.
-
-**5a. Optional but recommended: create a stable code-signing certificate (do this once, before your first build).**
-
-You can skip this step. If `build.sh` finds no certificate named `AeroSwitcherCodeSign`, it signs the app ad hoc and prints a note saying so. The app works, but macOS counts every rebuild as a new app and asks for Input Monitoring and Screen Recording again each time. If you plan to build more than once, do this step.
-
-Normally, every time you rebuild a Swift app, macOS treats the new build as a completely different, unrecognized app and resets any permissions you'd already granted it (Input Monitoring, Screen Recording), forcing you to re-approve them every single time. A self-signed certificate in your own Mac's Keychain sidesteps this: as long as you keep signing new builds with the *same* certificate, macOS keeps treating them as "the same app" and permissions survive rebuilds.
+Without it, `build.sh` signs the app ad hoc and prints a note saying so. The app works, but macOS treats every rebuild as a new app and asks for the permissions again each time. With a certificate in your Keychain, every build signed with it counts as the same app and keeps its permissions. If you'll only build once, skip this.
 
 Open **Keychain Access** (Cmd+Space, type it):
 
 1. Menu bar: **Keychain Access > Certificate Assistant > Create a Certificate...**
-2. Name: `AeroSwitcherCodeSign` (must match exactly, `build.sh` refers to this name)
+2. Name: `AeroSwitcherCodeSign` (exactly this, `build.sh` looks for this name)
 3. Identity Type: **Self Signed Root**
 4. Certificate Type: **Code Signing**
 5. Click **Create**, then **Continue** through the rest, then **Done**.
 
-You only need to do this once ever, not once per rebuild.
+**B3. Build it.**
 
-**5b. Lay out the project folder.**
-
-Swift Package Manager (the build system used here) expects a specific folder structure:
-
-```
-AeroSwitcher/
-├── Package.swift
-├── Info.plist
-├── AppIcon.icns
-├── build.sh
-└── Sources/
-    └── AeroSwitcher/
-        ├── main.swift
-        ├── Logging.swift
-        ├── AeroSpaceBridge.swift
-        ├── ThumbnailCapture.swift
-        ├── DataModel.swift
-        ├── Config.swift
-        ├── Views.swift
-        ├── MRUTracking.swift
-        ├── WindowController.swift
-        ├── Keybinds.swift
-        ├── HotkeyInterception.swift
-        ├── MenuBar.swift
-        ├── SettingsWindow.swift
-        └── SetupHelp.swift
-```
-
-The `.swift` files specifically have to sit inside `Sources/AeroSwitcher/`, not next to `Package.swift`, that's just how Swift Package Manager finds source files (the `path:` line inside `Package.swift` points there). Every `.swift` file in that folder gets built into the app automatically, there's no list of them to keep up to date.
-
-**5c. Build it.**
-
-From Terminal, inside that `AeroSwitcher` folder:
-
-```
-cd path/to/AeroSwitcher
-chmod +x build.sh
+```bash
+git clone https://github.com/remitoshniwal/aeroswitcher.git
+cd aeroswitcher
 ./build.sh
-```
-
-This compiles the Swift code twice, once for Apple silicon Macs and once for Intel Macs (`swift build -c release`), joins the two into one program with `lipo`, wraps the result into a real `.app` bundle with the right `Info.plist`, and signs it (with the certificate from step 5a if you made one, otherwise ad hoc, and it tells you). If it finishes with `Done. Built: AeroSwitcher.app`, you now have a working app sitting right there in that folder.
-
-The first build takes a couple of minutes because of the two compiles, later ones are quicker. If you only ever use this one Mac, `ARCHS=arm64 ./build.sh` (Apple silicon) or `ARCHS=x86_64 ./build.sh` (Intel) builds just your half.
-
-If it fails instead, the error is almost always a plain Swift compile error (typo, missing brace) printed right above the failure, read it before assuming something bigger is wrong.
-
-## 6. Move it to Applications and grant permissions
-
-```
 mv AeroSwitcher.app /Applications/
+open /Applications/AeroSwitcher.app
 ```
 
-`/Applications` is the standard, expected location, Login Items and Spotlight both expect apps to live there.
+`build.sh` compiles the app twice, once for Apple silicon and once for Intel, joins the two with `lipo`, wraps the result into `AeroSwitcher.app` and signs it. The first build takes a couple of minutes. If you only use one Mac, `ARCHS=arm64 ./build.sh` (Apple silicon) or `ARCHS=x86_64 ./build.sh` (Intel) builds just that half, quicker. If the build fails, the real error is printed right above the failure line.
 
-Open it once (double-click, or `open /Applications/AeroSwitcher.app`). An app you built yourself normally opens with no warning, because it never came from the internet. If macOS does say it can't verify the developer (usually only for an already built copy someone sent you, since AeroSwitcher isn't signed by a paid Apple Developer account), open **System Settings > Privacy & Security**, scroll down to the message about AeroSwitcher and press **Open Anyway** (only needed once). The old right-click > **Open** trick no longer works for such apps on recent macOS.
+An app you built yourself opens without the Open Anyway step from part A, because it never came from the internet.
 
-Then grant its two permissions, both under **System Settings > Privacy & Security**:
+## C. First launch
 
-- **Accessibility** — needed for it to catch Cmd+Tab before macOS does. Without this, pressing Cmd+Tab does nothing, or opens the normal macOS switcher. (macOS also has an Input Monitoring page for keyboard access. On the author's Mac AeroSwitcher is only in the Accessibility list and Cmd+Tab works, so Accessibility is the one to switch on. If Cmd+Tab still fails after that, check Input Monitoring too.)
-- **Screen Recording** — needed to take the window thumbnails. Without this, the switcher opens but every tile is blank.
+**C1. If you used AeroSpace before:** quit AeroSpace and remove it from **System Settings > General > Login Items**. Two window managers at once would fight over every window, so AeroSwitcher pauses while AeroSpace runs (the menu bar then shows a warning triangle). On its first launch AeroSwitcher copies your workspaces, their keys and your app rules from `~/.aerospace.toml`. It only reads that file and never changes it.
 
-If AeroSwitcher isn't in the list yet, press the **+** button under the list, choose AeroSwitcher in your Applications folder, and switch it on.
+**C2. Grant two permissions.** AeroSwitcher opens its **Setup** window and shows what's missing, with a button for each. Both are in **System Settings > Privacy & Security**:
+
+- **Accessibility**, so it can catch Cmd+Tab and the Option keys before macOS does, and move other apps' windows. Without it the window manager stays paused and Cmd+Tab opens the normal macOS switcher.
+- **Screen Recording**, for the window pictures in the switcher. Without it the cards are blank.
+
+If AeroSwitcher isn't in a list yet, click the **+** under the list, choose AeroSwitcher in Applications and switch it on. If it is in the list but still marked in Setup, select it, remove it with **-**, and add it again with **+**. Then click **Restart AeroSwitcher** in the Setup window; Screen Recording in particular often needs a restart.
 
 ![The Setup window with every check ticked](images/setup.png)
 
-You don't have to remember any of this: if a permission, AeroSpace itself, or the recent-order line in `.aerospace.toml` (step 3) is missing, AeroSwitcher opens its **Setup** window on launch, says what is missing and has a button for each fix. It's also in the menu bar menu under **Permissions > Setup...**. Ticks appear by themselves once you've fixed something. Screen Recording sometimes only takes effect after a restart, the window has a button for that.
+The ticks update by themselves. Setup is always in the menu bar menu under **Permissions > Setup...**.
 
-**Test it now**, before moving on: hold Cmd and press Tab. You should see a row of window thumbnails for whatever's open in your current AeroSpace workspace.
+**C3. Try it.** You start with four workspaces: **Main**, **Work**, **Personal** and **Extra**, on **Option+1** to **Option+4** (or your AeroSpace ones). The menu bar shows the one you're in, and every window that was open is in it.
+
+- Press **Option+2**. Your windows disappear and the menu bar says Work. Open an app: its window belongs to Work.
+- Press **Option+1** to go back. Main's windows return exactly where they were.
+- In a window, press **Option+Shift+2** to send it to Work.
+- Press **Option+F** to flip a window between filling the screen and a smaller centered size.
+- Hold **Cmd** and press **Tab**: only the windows of the workspace you're in.
 
 ![The switcher panel](images/switcher.png)
 
-## 7. Set up the config file
+**C4. Make the workspaces yours.** Menu bar menu > **Settings... > Workspaces**: rename workspaces, add more, record their keys by clicking the key chip, and send apps to a workspace with **+ App**. Right-click an app to move it to another workspace. The other tabs set up grey launcher tiles, the keys inside the switcher and custom icons. Every change applies at once.
 
-AeroSwitcher creates `~/Library/Application Support/AeroSwitcher/config.json` automatically the first time it runs, with sensible defaults and an empty `workspaces` list. You don't have to touch it for the app to work, Cmd+Tab and the Cmd+` overview both work immediately.
+**C5. Optional: start it at login.** Tick **Launch at login** in the menu bar menu (also in **Settings... > General**). Log out and back in once to check it starts by itself.
 
-If you want the greyed-out "not open yet" launcher tiles (jump straight to launching an app that isn't running), click AeroSwitcher's workspace name in the menu bar, choose **Settings...**, open **Launcher tiles**, pick a workspace and click **Add app...**, matching your `.aerospace.toml` groupings. You can also edit the file by hand and add entries under `workspaces`; see the **Config file** section of the main documentation for the exact format, this part is optional and can be done any time later, not something that blocks getting the app running.
+It runs with no Dock icon, only the workspace name in the menu bar.
 
-Changes in the settings window apply at once, and saving `config.json` by hand applies it within a second, no restart needed (see **Reloading** in the main documentation).
+## Updating
 
-## 8. The last permission: Accessibility, for the maximize toggle
+Quit AeroSwitcher from its menu (every hidden window comes back on screen first), replace the app in Applications with the new one, and open it again. Your settings are kept in `~/Library/Application Support/AeroSwitcher/`. A downloaded update may need the Open Anyway step again, and macOS may ask for the two permissions again; the Setup window shows it if so.
 
-Separately from AeroSwitcher's own two permissions above, the fullscreen/maximize system set up in step 4 needs its own **Accessibility** permission, since it resizes windows via AppleScript's System Events. This is usually already covered by granting AeroSpace Accessibility access back in step 2 (since AeroSpace is what actually launches the scripts), but if windows stop resizing when you press `alt-f` or open a new app, this is the first thing to check:
+## Removing it
 
-**System Settings > Privacy & Security > Accessibility** — confirm AeroSpace (and/or `osascript`, if it shows up as its own separate entry) is listed and enabled.
-
-## 9. Run AeroSwitcher automatically at login
-
-You can do this whenever you like. Rebuilding later is fine too: the permissions survive a rebuild as long as it's signed with the same certificate from step 5a.
-
-Open `/Applications/AeroSwitcher.app`, click its workspace name in the menu bar, and tick **Launch at login** (also in **Settings...** > General). (It only allows this from an Applications folder, because macOS remembers where the app was.) Adding it by hand in **System Settings > General > Login Items & Extensions** under "Open at Login" works too; the menu then shows it ticked.
-
-That's it, no separate background service needed. It runs with no Dock icon (this is intentional, set via `LSUIElement` in its `Info.plist`) and nothing on screen except its menu bar item until you press Cmd+Tab.
-
-**One icon instead of two:** AeroSwitcher's menu bar item does everything AeroSpace's icon does that you'd use day to day. To hide AeroSpace's icon, tick **Hide AeroSpace's icon** in AeroSwitcher's menu and follow the short instructions (AeroSpace's name has to be on the left of the │ that appears, then click Hide). Don't switch AeroSpace off in **System Settings > Menu Bar > Allow in the Menu Bar** and don't Cmd-drag its icon out of the bar: AeroSpace quits when you do either.
-
-Log out and back in once (or restart) to confirm it actually launches on its own before you stop thinking about it.
-
----
-
-## Optional: let AeroSwitcher manage windows instead of AeroSpace
-
-AeroSwitcher can do AeroSpace's job itself (workspaces, app rules, maximize, the Option keys), so AeroSpace isn't needed any more. It is off until you switch it on:
-
-1. Open AeroSwitcher's menu > **Settings...** > **Workspaces** and check your workspaces and app rules. The first start already copied them from `~/.aerospace.toml`.
-2. Open the menu > **Permissions** > **Setup...**, scroll to the bottom and click **Use AeroSwitcher's Own Window Manager...**. It quits AeroSpace and restarts AeroSwitcher.
-3. Remove AeroSpace from System Settings > General > Login Items.
-
-To go back, the same place in the Setup window has **Go Back to AeroSpace...**. If a window ever goes missing, the menu has **Bring Back All Windows**. Details are in the documentation, "AeroSwitcher's own window manager".
-
-## Using it day to day
-
-- **Cmd+Tab** — opens the switcher, scoped to whatever AeroSpace workspace you're currently on. Keep holding Cmd and press Tab again to move to the next window, release Cmd to switch to whatever's selected.
-- **Cmd+Shift+Tab** — same, but opens landing on your least-recently-used window (matches how stock macOS Cmd+Tab behaves).
-- **Cmd+\`** (backtick, top-left key) — opens a second, read-only panel showing every window across every workspace at once, for when you just want to glance at everything open. Nothing in this panel is clickable, it's purely for looking.
-- While the switcher is open: **D**/**A** cycle forward/back through windows, **S**/**W** step onto and off of the greyed "not open yet" row, **Q**/**E** page up/down, **F** confirms (same as releasing Cmd), **Escape** cancels. All of these are under your left hand, next to where Cmd already is.
-- **Alt+Q/W/E/A/S/D** — jump directly to a workspace (Core / School / Personal / Creative / Dev / Gaming).
-- **Alt+Shift+Q/W/E/A/S/D** — send the window you're currently on to a workspace.
-- **Alt+F** — toggles the current window between filling the screen and a smaller, centered size. New windows start maximized automatically, you only need this when you actually want something smaller.
-
-Everything above is a keybinding default. Both AeroSwitcher's own keys (`config.json`) and AeroSpace's own keys (`.aerospace.toml`) can be changed, see the **Keybindings** and **Config file** sections of the main documentation for how.
-
-## Keeping the repo's AeroSpace copies up to date
-
-The `aerospace/` folder in this repo holds copies of `~/.aerospace.toml` and the three scripts, not the live files. After you edit the real ones, run this from the repo folder to copy them in:
-
-```
-./sync-aerospace.sh
-```
-
-It only copies from your Mac into the repo, never the other way, so it can't break your running setup. It prints which files changed, and `git diff aerospace/` shows the exact lines. Commit them if they look right. If a live file is missing it skips that file instead of blanking out the repo copy, and while copying it writes `$HOME` in place of your home folder path, so the copies in the repo never contain your user name.
-
-At the end it also runs a **drift check** (`check-drift.js`), which compares `~/.aerospace.toml` with AeroSwitcher's `config.json` and lists apps that are set up in one but not the other, or in a different workspace in each. It only prints, it never changes either file. Some differences are on purpose (Finder is a launcher tile everywhere but has no AeroSpace rule), so put those in the `EXCEPTIONS` list at the top of `check-drift.js` and they stop being reported. You can also run it on its own:
-
-```
-osascript -l JavaScript check-drift.js
-```
-
-Matching app names between the two files is loose (the toml says "Ableton Live", config.json says "Ableton"), so an odd false alarm is possible. If it reports something that's clearly wrong, that matching is the place to look.
+Quit AeroSwitcher from its menu so every window comes back on screen, then move it from Applications to the Trash. To remove its settings and log too, delete `~/Library/Application Support/AeroSwitcher` and `~/Library/Logs/AeroSwitcher`, and remove it from the Accessibility and Screen Recording lists.
 
 ## If something doesn't work
 
 AeroSwitcher keeps a log of what it did and what failed: **Settings... > General > Show log**, or `~/Library/Logs/AeroSwitcher/AeroSwitcher.log`. The first lines say which version it is. Read through it before sharing it, it contains file paths.
 
-- **Cmd+Tab does nothing** → check that Accessibility is switched on for AeroSwitcher (and look at Input Monitoring too).
-- **Switcher opens but thumbnails are blank** → check Screen Recording permission is granted to AeroSwitcher.
-- **New windows don't move to the right workspace, or don't fill the screen** → check AeroSpace is actually running, and that `~/.aerospace.toml` loaded without errors (run `aerospace list-workspaces --all` in Terminal, if that errors, your config has a syntax problem).
-- **Alt+F does nothing, or windows don't resize** → check Accessibility permission (step 8), and double check the folder path inside `.aerospace.toml` matches where you actually put the three script files (step 4).
-- **Permissions keep resetting on every rebuild** → you likely skipped step 5a (the stable Keychain certificate). `build.sh` says "signed ad hoc" when it can't find the certificate, so look for that note in its output, and check the certificate is named exactly `AeroSwitcherCodeSign` in Keychain Access.
+- **A window is missing** → menu bar menu > **Bring Back All Windows**. Every window comes back on screen, in the workspace you're in.
+- **Warning triangle in the menu bar** → the window manager is paused. The menu and the Setup window say why: no Accessibility permission, no workspaces, or AeroSpace running.
+- **Cmd+Tab opens the normal macOS switcher** → Accessibility isn't switched on for AeroSwitcher (look at Input Monitoring too).
+- **The switcher opens but the cards are blank** → Screen Recording isn't switched on, or needs a restart of AeroSwitcher.
+- **Permissions are asked for again after every rebuild** → `build.sh` printed that it signed ad hoc: the certificate from step B2 is missing or has another name.

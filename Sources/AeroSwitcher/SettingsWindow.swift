@@ -6,13 +6,13 @@ import UniformTypeIdentifiers
 // MARK: - Settings window
 //
 // Opened from the menu bar ("Settings..."). Five tabs:
-//   General         tile status text, auto reload, launch at login, hiding
-//                   AeroSpace's icon, buttons for config.json
+//   General         tile status text, auto reload, launch at login,
+//                   buttons for config.json
 //   Launcher tiles  which apps get a grey tile in which workspace
 //   Keys            the keys used while the switcher is open, recorded by
 //                   pressing them
 //   Icons           custom icons per app
-//   Workspaces      AeroSwitcher's own window manager (Phase 14): its
+//   Workspaces      the window manager (Phase 14): its
 //                   workspaces and their Option+keys, the rules that send
 //                   new windows to a workspace, and the maximize settings
 //                   (config.json's "windowManager" section)
@@ -28,9 +28,8 @@ import UniformTypeIdentifiers
 // after every reload (yours or its own), so a hand edit appears here
 // within about a second.
 //
-// Launch at login and Hide AeroSpace's icon aren't in config.json, they're
-// macOS's / AeroSwitcher's own preferences. Their toggles here run exactly
-// the same code as the menu items (MenuBar.swift).
+// Launch at login isn't in config.json, it's macOS's own setting. Its
+// toggle here runs exactly the same code as the menu item (MenuBar.swift).
 //
 // Key recording: while you record a key, the window listens to keys typed
 // into THIS window only (a "local monitor", removed again after one key).
@@ -65,9 +64,8 @@ final class SettingsModel: ObservableObject {
     @Published private(set) var fileProblem: String?
     // A message at the top of the window, e.g. why a change wasn't saved.
     @Published var notice: String?
-    @Published private(set) var aerospaceWorkspaces: [String] = []
+    @Published private(set) var managedWorkspaces: [String] = []
     @Published private(set) var launchAtLogin = false
-    @Published private(set) var hidingAeroSpaceIcon = false
     @Published private(set) var recordingAction: String?
     // Which Option+key of the Workspaces tab is being recorded, if any. Kept
     // apart from recordingAction (the Keys tab) because these keys are
@@ -109,12 +107,10 @@ final class SettingsModel: ObservableObject {
         shownTree = snapshot.tree ?? [:]
         fileProblem = snapshot.problem
         config = snapshot.problem == nil ? snapshot.config : nil
-        // Own window manager: a workspace added or renamed in the Workspaces
-        // tab should show up in the Launcher tiles tab straight away, not
-        // only the next time the window opens.
-        if ownWindowManager {
-            aerospaceWorkspaces = windowManagerSettings.workspaceNames
-        }
+        // A workspace added or renamed in the Workspaces tab should show up
+        // in the Launcher tiles tab straight away, not only the next time
+        // the window opens.
+        managedWorkspaces = windowManagerSettings.workspaceNames
         if selectedWorkspace == nil || !workspaceNames.contains(selectedWorkspace!) {
             selectedWorkspace = workspaceNames.first
         }
@@ -122,41 +118,22 @@ final class SettingsModel: ObservableObject {
 
     func refreshToggles() {
         launchAtLogin = SMAppService.mainApp.status == .enabled
-        hidingAeroSpaceIcon = menuBar?.isHidingAeroSpaceIcon ?? false
     }
 
-    // Asked off the main thread: the main thread also runs the Cmd+Tab
-    // event tap, and must never wait for AeroSpace (see CLAUDE.md).
-    //
-    // When AeroSwitcher manages windows itself (ownWindowManager), AeroSpace
-    // isn't running, so there is nobody to ask: the workspaces are the ones
-    // in the Workspaces tab (config.json's "windowManager" section, as the
-    // running app loaded it). The variable is still called
-    // aerospaceWorkspaces so the Launcher tiles tab works the same in both
-    // modes. refresh() keeps it up to date after every reload in that mode.
-    func loadAeroSpaceWorkspaces() {
-        if ownWindowManager {
-            aerospaceWorkspaces = windowManagerSettings.workspaceNames
-            if selectedWorkspace == nil { selectedWorkspace = workspaceNames.first }
-            return
-        }
-        Task.detached {
-            let result = runAerospace(["list-workspaces", "--all"])
-            let names = result.ok
-                ? result.output.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-                : []
-            await MainActor.run {
-                self.aerospaceWorkspaces = names
-                if self.selectedWorkspace == nil { self.selectedWorkspace = self.workspaceNames.first }
-            }
-        }
+    // The workspaces in the Workspaces tab (config.json's "windowManager"
+    // section, as the running app loaded it). refresh() keeps them up to
+    // date after every reload.
+    func loadManagedWorkspaces() {
+        managedWorkspaces = windowManagerSettings.workspaceNames
+        if selectedWorkspace == nil { selectedWorkspace = workspaceNames.first }
     }
 
-    // AeroSpace's workspaces in its own order, then any that only
-    // config.json has (those are flagged in the Launcher tiles tab).
+    // The window manager's workspaces in their order, then any that only
+    // the launcher tiles part of config.json has (those are flagged in the
+    // Launcher tiles tab).
     var workspaceNames: [String] {
-        let configOnly = (config?.workspaces.keys.sorted() ?? []).filter { !aerospaceWorkspaces.contains($0) }
-        return aerospaceWorkspaces + configOnly
+        let configOnly = (config?.workspaces.keys.sorted() ?? []).filter { !managedWorkspaces.contains($0) }
+        return managedWorkspaces + configOnly
     }
 
     // Every change goes through here. Returns whether it was saved.
@@ -184,11 +161,6 @@ final class SettingsModel: ObservableObject {
 
     func toggleLaunchAtLogin() {
         menuBar?.launchAtLoginClicked()
-        refreshToggles()
-    }
-
-    func toggleHideAeroSpaceIcon() {
-        menuBar?.hideAeroSpaceIconClicked()
         refreshToggles()
     }
 
@@ -886,7 +858,7 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         installEditMenuIfNeeded()
         model.refresh()
         model.refreshToggles()
-        model.loadAeroSpaceWorkspaces()
+        model.loadManagedWorkspaces()
         if window == nil {
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 760, height: 560),
@@ -1029,16 +1001,9 @@ struct GeneralTab: View {
                 Toggle("Launch at login", isOn: Binding(
                     get: { model.launchAtLogin },
                     set: { _ in model.toggleLaunchAtLogin() }))
-                VStack(alignment: .leading, spacing: 4) {
-                    Toggle("Hide AeroSpace's icon", isOn: Binding(
-                        get: { model.hidingAeroSpaceIcon },
-                        set: { _ in model.toggleHideAeroSpaceIcon() }))
-                    Text("Same as the menu item. Hides every menu bar icon to the left of AeroSwitcher's.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
             }
             Section("Setup") {
-                Text("Checks AeroSpace and the permissions AeroSwitcher needs.")
+                Text("Checks the window manager and the permissions AeroSwitcher needs.")
                     .font(.caption).foregroundStyle(.secondary)
                 Button("Open Setup...") { SetupHelp.shared.show() }
             }
@@ -1049,8 +1014,8 @@ struct GeneralTab: View {
                 HStack {
                     Button("Open config.json") { NSWorkspace.shared.open(configFileURL()) }
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([configFileURL()]) }
-                    // Same as the menu's Reload config: both AeroSwitcher and AeroSpace.
-                    Button("Reload config") { settings.reloadTogether() }
+                    // Same as the menu's Reload config.
+                    Button("Reload config") { settings.reloadAndReport() }
                 }
             }
             Section("Log") {
@@ -1080,7 +1045,7 @@ struct LauncherTab: View {
                 HStack {
                     Text(name)
                     Spacer()
-                    if !model.aerospaceWorkspaces.isEmpty && !model.aerospaceWorkspaces.contains(name) {
+                    if !model.managedWorkspaces.isEmpty && !model.managedWorkspaces.contains(name) {
                         Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
                     }
                 }
@@ -1090,10 +1055,9 @@ struct LauncherTab: View {
             if let workspace = model.selectedWorkspace {
                 WorkspaceTilesView(model: model, workspace: workspace).id(workspace)
             } else {
-                // In own window manager mode nobody is asked, the list is
-                // just empty until workspaces are added in the Workspaces tab.
-                Text(model.aerospaceWorkspaces.isEmpty
-                     ? (ownWindowManager ? "No workspaces yet. Add them in the Workspaces tab." : "Asking AeroSpace for its workspaces...")
+                // Empty until workspaces are added in the Workspaces tab.
+                Text(model.managedWorkspaces.isEmpty
+                     ? "No workspaces yet. Add them in the Workspaces tab."
                      : "Pick a workspace")
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1113,11 +1077,9 @@ struct WorkspaceTilesView: View {
             Text("Launcher tiles in \(workspace)").font(.headline)
             Text("A grey tile shows for each app here that has no window in this workspace. Tiles are always shown in alphabetical order, Running before Quit.")
                 .font(.caption).foregroundStyle(.secondary)
-            if !model.aerospaceWorkspaces.isEmpty && !model.aerospaceWorkspaces.contains(workspace) {
+            if !model.managedWorkspaces.isEmpty && !model.managedWorkspaces.contains(workspace) {
                 HStack {
-                    Text(ownWindowManager
-                         ? "The Workspaces tab has no workspace called \(workspace), so these tiles never show."
-                         : "AeroSpace has no workspace called \(workspace), so these tiles never show.")
+                    Text("The Workspaces tab has no workspace called \(workspace), so these tiles never show.")
                         .foregroundStyle(.orange)
                     Spacer()
                     Button("Remove \(workspace)") { model.removeWorkspace(workspace) }
@@ -1200,7 +1162,7 @@ struct TileRow: View {
             CommitTextField(label: "Match", value: tile.match, required: true, onRefused: { model.notice = $0 }) {
                 model.setTileField("match", to: $0, at: index, in: workspace)
             }
-            Text("The tile hides while a window of an app whose name contains this is open here. It has to match the name AeroSpace uses for the app.")
+            Text("The tile hides while a window of an app whose name contains this is open here. It has to match the app's name as macOS shows it.")
                 .font(.caption).foregroundStyle(.secondary)
             CommitTextField(label: "Open", value: tile.open, required: true, onRefused: { model.notice = $0 }) {
                 model.setTileField("open", to: $0, at: index, in: workspace)
@@ -1605,10 +1567,7 @@ struct WorkspacesTab: View {
         let aeroSpaceConfig = aeroSpaceConfigFilePath()
         ScrollView {
             VStack(alignment: .leading, spacing: 6) {
-                Text((ownWindowManager
-                     ? "AeroSwitcher manages your windows with these workspaces."
-                     : "Used once AeroSwitcher manages windows itself (switch in the Setup window).")
-                     + " Right-click an app to move it.")
+                Text("AeroSwitcher manages your windows with these workspaces. Right-click an app to move it.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
