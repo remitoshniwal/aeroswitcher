@@ -1,5 +1,6 @@
 import Cocoa
 import SwiftUI
+import Carbon
 
 // MARK: - SwiftUI view
 
@@ -757,14 +758,12 @@ final class ConfigProblemsWindow {
         if !report.errors.isEmpty {
             sections.append(ConfigProblemSection(
                 title: "config.json has errors",
-                summary: report.keptPreviousSettings
-                    ? "AeroSwitcher is still using your previous settings. Fix the problem and save, it reloads by itself."
-                    : "AeroSwitcher is using its built-in default settings until this is fixed. Fix the problem and save, it reloads by itself.",
+                summary: report.keptPreviousSettings ? "Using your previous settings until it's fixed." : "Using default settings until it's fixed.",
                 lines: report.errors + report.warnings))
         } else if !report.warnings.isEmpty {
             sections.append(ConfigProblemSection(
                 title: "config.json loaded with warnings",
-                summary: "Everything else was applied. Each item below fell back to its default.",
+                summary: "These use their defaults.",
                 lines: report.warnings))
         }
         guard !sections.isEmpty else {
@@ -824,4 +823,164 @@ func showFailureAlert(_ title: String, _ text: String) {
 func shortErrorText(_ text: String) -> String {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.count > 300 ? String(trimmed.prefix(300)) + "..." : trimmed
+}
+
+// MARK: - Secure input lock
+//
+// While an app has a password field focused (or Terminal's Secure Keyboard
+// Entry is on), macOS turns on "secure input": no event tap sees any key, so
+// Cmd+Tab and the Option keys can't reach AeroSwitcher. Same idea as
+// AeroSpace's SecureInputPanel (ui/SecureInputView.swift): a small lock in a
+// corner of the screen while it lasts, so it's clear why the keys don't
+// work. Hovering over it says which app turned it on.
+//
+// Checked once a second (IsSecureEventInputEnabled is a cheap look-only
+// call; macOS sends no notification for it). Only shown while the Cmd+Tab
+// hook runs, since otherwise there is nothing to block. Change the corner
+// in place(), the wording in update().
+@MainActor
+final class SecureInputIndicator {
+    static let shared = SecureInputIndicator()
+
+    private var panel: NSPanel?
+    private var hoverView: SecureInputHoverView?
+    private var timer: Timer?
+    private var shownPID: pid_t?
+
+    private let iconSize = NSSize(width: 36, height: 36)
+
+    func start() {
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.check() }
+        }
+        check()
+    }
+
+    private func check() {
+        let blocked = IsSecureEventInputEnabled() && (hotkeys?.isRunning ?? false)
+        guard blocked else {
+            if panel?.isVisible == true {
+                panel?.orderOut(nil)
+                logInfo("Secure input: off, keys work again")
+            }
+            shownPID = nil
+            return
+        }
+        let pid = secureInputPID()
+        if panel?.isVisible != true || pid != shownPID {
+            shownPID = pid
+            update(appName: pid.flatMap { NSRunningApplication(processIdentifier: $0)?.localizedName })
+        }
+    }
+
+    private func update(appName: String?) {
+        logInfo("Secure input: on (\(appName ?? "unknown app")), Cmd+Tab and Option keys are blocked")
+        if panel == nil { makePanel() }
+        hoverView?.message = "Shortcuts are blocked while \(appName ?? "an app") has a password field open."
+        hoverView?.collapse()
+        place(expanded: false)
+        panel?.orderFrontRegardless()
+    }
+
+    private func makePanel() {
+        let panel = NSPanel(contentRect: NSRect(origin: .zero, size: iconSize),
+                            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.level = .statusBar
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.hidesOnDeactivate = false
+        panel.isReleasedWhenClosed = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
+        let view = SecureInputHoverView(iconSize: iconSize)
+        view.onResize = { [weak self] expanded in self?.place(expanded: expanded) }
+        panel.contentView = view
+        self.panel = panel
+        hoverView = view
+    }
+
+    // Bottom left of the main screen, above the Dock.
+    private func place(expanded: Bool) {
+        guard let panel, let screen = NSScreen.screens.first, let view = hoverView else { return }
+        let size = expanded ? view.expandedSize : iconSize
+        let area = screen.visibleFrame
+        panel.setFrame(NSRect(x: area.minX + 16, y: area.minY + 16, width: size.width, height: size.height), display: true)
+    }
+
+    // Which process turned secure input on. macOS keeps it in the
+    // console user's session info (kCGSSessionSecureInputPID), readable
+    // without any permission. nil if it isn't there.
+    private func secureInputPID() -> pid_t? {
+        let root = IORegistryEntryFromPath(kIOMainPortDefault, "IOService:/")
+        guard root != 0 else { return nil }
+        defer { IOObjectRelease(root) }
+        guard let users = IORegistryEntryCreateCFProperty(root, "IOConsoleUsers" as CFString, kCFAllocatorDefault, 0)?
+                .takeRetainedValue() as? [[String: Any]] else { return nil }
+        for user in users {
+            if let pid = user["kCGSSessionSecureInputPID"] as? Int, pid > 0 { return pid_t(pid) }
+        }
+        return nil
+    }
+}
+
+// The lock, and the sentence next to it while the mouse is over it. Plain
+// AppKit with an always-active tracking area, because AeroSwitcher is a
+// background app and its panel never becomes the key window.
+final class SecureInputHoverView: NSView {
+    var onResize: ((Bool) -> Void)?
+    var message = "" { didSet { label.stringValue = message } }
+    private let iconSize: NSSize
+    private let background = NSVisualEffectView()
+    private let lock = NSImageView()
+    private let label = NSTextField(labelWithString: "")
+    private(set) var expanded = false
+
+    var expandedSize: NSSize {
+        let textWidth = min(label.intrinsicContentSize.width, 360)
+        return NSSize(width: iconSize.width + textWidth + 14, height: iconSize.height)
+    }
+
+    init(iconSize: NSSize) {
+        self.iconSize = iconSize
+        super.init(frame: NSRect(origin: .zero, size: iconSize))
+        background.material = .hudWindow
+        background.state = .active
+        background.blendingMode = .behindWindow
+        background.wantsLayer = true
+        background.layer?.cornerRadius = 10
+        background.layer?.masksToBounds = true
+        background.autoresizingMask = [.width, .height]
+        background.frame = bounds
+        addSubview(background)
+        lock.image = NSImage(systemSymbolName: "lock.fill", accessibilityDescription: "Shortcuts blocked")
+        lock.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
+        lock.contentTintColor = .labelColor
+        lock.frame = NSRect(origin: .zero, size: iconSize)
+        addSubview(lock)
+        label.font = .systemFont(ofSize: NSFont.systemFontSize)
+        label.textColor = .labelColor
+        label.lineBreakMode = .byTruncatingTail
+        label.isHidden = true
+        addSubview(label)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override func mouseEntered(with event: NSEvent) {
+        expanded = true
+        label.isHidden = false
+        let height = label.intrinsicContentSize.height
+        label.frame = NSRect(x: iconSize.width, y: (iconSize.height - height) / 2, width: expandedSize.width - iconSize.width - 10, height: height)
+        onResize?(true)
+    }
+
+    override func mouseExited(with event: NSEvent) { collapse() }
+
+    func collapse() {
+        guard expanded else { return }
+        expanded = false
+        label.isHidden = true
+        onResize?(false)
+    }
 }

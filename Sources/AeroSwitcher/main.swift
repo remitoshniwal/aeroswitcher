@@ -103,6 +103,9 @@ Task { @MainActor in
     // Draws the panel once in memory (and later wakes up macOS's screenshot
     // service), so the first Cmd+Tab isn't slow (WindowController.warmUp).
     c.warmUp()
+    // The lock in the bottom left corner while a password field blocks keys
+    // (SecureInputIndicator, Views.swift).
+    SecureInputIndicator.shared.start()
 
     // The menu bar icon (workspace name and menu), see MenuBar.swift.
     // It also hands every focus event to the recent order (MRUTracker).

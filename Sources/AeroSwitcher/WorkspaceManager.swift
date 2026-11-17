@@ -295,8 +295,8 @@ final class WorkspaceManager: @unchecked Sendable {
     private func currentPauseReason() -> String? {
         // Look-only, never a permission prompt.
         if !AXIsProcessTrusted() { return "No Accessibility permission" }
-        if !WindowTracker.shared.isRunning { return "The window list is switched off (WindowTrackerOff)" }
-        if windowManagerSettings.workspaces.isEmpty { return "No workspaces set up (Settings > Workspaces)" }
+        if !WindowTracker.shared.isRunning { return "Window list is off (WindowTrackerOff)" }
+        if windowManagerSettings.workspaces.isEmpty { return "No workspaces" }
         if aeroSpaceRunning && testOnlyApps == nil { return "AeroSpace is running" }
         return nil
     }
@@ -318,8 +318,8 @@ final class WorkspaceManager: @unchecked Sendable {
                     // Not from inside the list update: an alert waits for a
                     // click, and the update must finish first.
                     DispatchQueue.main.async {
-                        showFailureAlert("AeroSwitcher stopped managing windows",
-                            "AeroSpace is running, and two window managers would fight over your windows. All windows are back on screen. Quit AeroSpace (and remove it from Login Items) to let AeroSwitcher carry on.")
+                        showFailureAlert("Paused: AeroSpace is running",
+                            "Quit AeroSpace to continue. All windows are back on screen.")
                     }
                 }
             }

@@ -95,7 +95,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         guard let button = statusItem.button else { return }
         if let reason = WorkspaceManager.shared.pausedReason {
             show(symbol: "exclamationmark.triangle.fill", on: button)
-            button.toolTip = "AeroSwitcher's window manager is paused: \(reason)"
+            button.toolTip = "Paused: \(reason)"
         } else {
             showName(workspaceName ?? WorkspaceManager.shared.focusedWorkspaceSnapshot(), on: button)
         }
@@ -165,7 +165,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                 menu.addItem(item)
             }
         } else {
-            let item = NSMenuItem(title: "No workspaces set up (Settings > Workspaces)", action: nil, keyEquivalent: "")
+            let item = NSMenuItem(title: "No workspaces", action: nil, keyEquivalent: "")
             item.isEnabled = false
             menu.addItem(item)
         }
@@ -175,7 +175,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         // Paused shows on its own line too, so the reason is readable
         // without hovering over the icon.
         if let reason = WorkspaceManager.shared.pausedReason {
-            let paused = NSMenuItem(title: "Window manager paused: \(reason)", action: nil, keyEquivalent: "")
+            let paused = NSMenuItem(title: "Paused: \(reason)", action: nil, keyEquivalent: "")
             paused.isEnabled = false
             menu.addItem(paused)
         }
@@ -263,10 +263,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         }
         let cmdTabAllowed = status.accessibilityTrusted || status.inputPreflight
         row("Window manager", mark: status.managerPausedReason == nil ? "✓" : "✗", opensSetup: true)
-        row("Accessibility (Cmd+Tab and windows)", mark: status.inputMonitoringOK ? "✓" : "✗",
+        row("Accessibility", mark: status.inputMonitoringOK ? "✓" : "✗",
             url: cmdTabAllowed ? nil : "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
             opensSetup: cmdTabAllowed)
-        row("Screen Recording (thumbnails)", mark: status.screenRecording ? "✓" : "✗",
+        row("Screen Recording", mark: status.screenRecording ? "✓" : "✗",
             url: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
         submenu.addItem(.separator())
         submenu.addItem(item("Setup...", #selector(setupHelpClicked)))
@@ -345,8 +345,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         // That happened once while testing the settings window.
         guard inApplications else {
             logWarn("Launch at login: refused, this copy is in \(path)")
-            alert("Launch at login only works from the Applications folder",
-                  "This copy of AeroSwitcher is in \(path). Change Launch at login from the copy in /Applications, so the login item always points at the right place.")
+            alert("Move AeroSwitcher to Applications first", "Launch at login only works from the Applications folder.")
             return
         }
         do {
@@ -394,7 +393,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
         let plain: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.labelColor]
         let credits = NSMutableAttributedString(
-            string: "Workspaces for macOS, with a Cmd+Tab that only shows the current workspace.\n\n", attributes: plain)
+            string: "Workspaces and a Cmd+Tab for macOS.\n\n", attributes: plain)
         func line(_ text: String, link: (word: String, url: String)? = nil) {
             let start = credits.length
             credits.append(NSAttributedString(string: text + "\n", attributes: plain))
@@ -404,7 +403,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             }
         }
         if let v = appVersion() { line("Commit \(v.commit)") }
-        line("Window management adapted from AeroSpace (MIT)", link: ("AeroSpace", "https://github.com/nikitabobko/AeroSpace"))
+        line("Includes code from AeroSpace (MIT)", link: ("AeroSpace", "https://github.com/nikitabobko/AeroSpace"))
         line("")
         line("Source code on GitHub", link: ("Source code on GitHub", repoURL))
         line("MIT License", link: ("MIT License", repoURL + "/blob/main/LICENSE"))

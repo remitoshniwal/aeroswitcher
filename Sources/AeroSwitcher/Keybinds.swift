@@ -68,7 +68,7 @@ func resolveKeybinds(_ config: KeybindConfig, report: ConfigReport) -> ResolvedK
     let defaults = KeybindConfig()
     func resolve(_ label: String, _ configured: String, fallback: String) -> Int64 {
         if let code = keyCode(forName: configured) { return code }
-        report.warning("keybinds.\(label) is \"\(configured)\", which isn't a key AeroSwitcher recognizes, so the default (\"\(fallback)\") is used instead.")
+        report.warning("keybinds.\(label): unknown key \"\(configured)\", using \"\(fallback)\".")
         return keyCode(forName: fallback)!  // the built-in defaults are always valid names
     }
     let resolved = ResolvedKeybinds(
@@ -94,13 +94,13 @@ func resolveKeybinds(_ config: KeybindConfig, report: ConfigReport) -> ResolvedK
     ]
     for i in 0..<named.count {
         for j in (i + 1)..<named.count where named[i].1 == named[j].1 {
-            report.warning("keybinds.\(named[i].0) and keybinds.\(named[j].0) are both set to the same key, so \(named[j].0) will never fire.")
+            report.warning("keybinds.\(named[i].0) and keybinds.\(named[j].0) use the same key.")
         }
         // Tab (keyCode 48) is permanently what opens the switcher in the
         // first place — it's handled separately, before any of these, so
         // binding another action to it here would just never be reachable.
         if named[i].1 == 48 {
-            report.warning("keybinds.\(named[i].0) is set to Tab, which is always reserved for opening the switcher, so it can never fire. Pick a different key.")
+            report.warning("keybinds.\(named[i].0): Tab is reserved for Cmd+Tab.")
         }
     }
 

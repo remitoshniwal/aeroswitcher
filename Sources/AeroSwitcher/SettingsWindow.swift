@@ -44,14 +44,14 @@ import UniformTypeIdentifiers
 // Plain-English names for each keybind, shown in the Keys tab. Change the
 // wording here.
 private let keybindDescriptions: [String: (title: String, detail: String)] = [
-    "cycleNext": ("Next card", "In the Cmd+` overview: next page"),
-    "cyclePrevious": ("Previous card", "In the overview: previous page"),
-    "enterGreyedRow": ("Down to the launcher tiles", "In the overview: scroll down (only on a page taller than the screen)"),
-    "exitGreyedRow": ("Back up from the launcher tiles", "In the overview: scroll up"),
-    "pageUp": ("Previous page of cards", "Not used in the overview"),
-    "pageDown": ("Next page of cards", "Not used in the overview"),
-    "confirm": ("Switch to the selected card", "Or open the selected launcher app. In the overview: close it"),
-    "cancel": ("Close without switching", "Same in the overview"),
+    "cycleNext": ("Next", ""),
+    "cyclePrevious": ("Previous", ""),
+    "enterGreyedRow": ("Down to launcher tiles", ""),
+    "exitGreyedRow": ("Up to windows", ""),
+    "pageUp": ("Previous page", ""),
+    "pageDown": ("Next page", ""),
+    "confirm": ("Switch", ""),
+    "cancel": ("Cancel", ""),
 ]
 
 // MARK: The model (what the window shows, and every change it can make)
@@ -287,12 +287,12 @@ final class SettingsModel: ObservableObject {
         let code = Int64(event.keyCode)
         logDebug("Settings: key pressed while recording \(action): code \(code)")
         guard let name = keyName(forCode: code) else {
-            notice = "AeroSwitcher can't use that key. Pick a letter, a digit, an arrow, Space, Return, Escape, Delete, Page Up or Page Down."
+            notice = "Can't use that key."
             NSSound.beep()
             return
         }
         if code == 48 {
-            notice = "Tab can't be used here: Cmd+Tab always opens the switcher (and Cmd+Shift+Tab goes back)."
+            notice = "Tab is reserved for Cmd+Tab."
             NSSound.beep()
             return
         }
@@ -307,8 +307,8 @@ final class SettingsModel: ObservableObject {
         if let other {
             let otherTitle = keybindDescriptions[other.name]?.title ?? other.name
             let alert = NSAlert()
-            alert.messageText = "\(keyDisplayName(name)) is already used for \"\(otherTitle)\""
-            alert.informativeText = "Swap them? \"\(otherTitle)\" would get \(keyDisplayName(currentName)) instead."
+            alert.messageText = "\(keyDisplayName(name)) is used by \(otherTitle)"
+            alert.informativeText = "Swap them?"
             alert.addButton(withTitle: "Swap")
             alert.addButton(withTitle: "Cancel")
             guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -326,7 +326,7 @@ final class SettingsModel: ObservableObject {
             }
         }
         if name == "space" {
-            notice = "Saved, but Cmd+Space belongs to Spotlight, and Spotlight wins: this key probably won't work while the switcher is open."
+            notice = "Saved, but Cmd+Space opens Spotlight, so it may not work."
         }
     }
 
@@ -424,7 +424,7 @@ final class SettingsModel: ObservableObject {
     func renameProblem(_ newName: String, at index: Int) -> String? {
         let others = windowManagerWorkspaceNames.enumerated().filter { $0.offset != index }.map(\.element)
         if others.contains(where: { $0.caseInsensitiveCompare(newName) == .orderedSame }) {
-            return "There's already a workspace called \(newName), so the old name was put back."
+            return "\(newName) already exists."
         }
         return nil
     }
@@ -456,7 +456,7 @@ final class SettingsModel: ObservableObject {
         if rules > 0 {
             let alert = NSAlert()
             alert.messageText = "Remove \(name)?"
-            alert.informativeText = "\(rules) app rule\(rules == 1 ? "" : "s") send\(rules == 1 ? "s" : "") new windows to \(name). \(rules == 1 ? "It" : "They") will be removed too."
+            alert.informativeText = "Its \(rules) app\(rules == 1 ? "" : "s") will be removed too."
             alert.addButton(withTitle: "Remove")
             alert.addButton(withTitle: "Cancel")
             guard alert.runModal() == .alertFirstButtonReturn else {
@@ -619,7 +619,7 @@ final class SettingsModel: ObservableObject {
         logDebug("Settings: key pressed while recording \(target.logName): code \(code)")
         if code == 53 { return }  // Escape: just stop recording, nothing changes
         guard let name = keyName(forCode: code), name.count == 1 else {
-            notice = "Pick a letter or a digit. Option with arrows, Delete, Return or Space already does things while you type, so those aren't offered here."
+            notice = "Use a letter or a digit."
             NSSound.beep()
             return
         }
@@ -634,8 +634,8 @@ final class SettingsModel: ObservableObject {
             // Keys here are optional, so the friendly fix is to MOVE the key
             // (the other one is left without), not to swap like the Keys tab.
             let alert = NSAlert()
-            alert.messageText = "Option + \(keyDisplayName(name)) is already used for \(other.title)"
-            alert.informativeText = "Use it for \(target.title) instead? \(other.title) will have no key."
+            alert.messageText = "Option+\(keyDisplayName(name)) is used by \(other.title)"
+            alert.informativeText = "Move it to \(target.title)?"
             alert.addButton(withTitle: "Use It Here")
             alert.addButton(withTitle: "Cancel")
             guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -656,16 +656,16 @@ final class SettingsModel: ObservableObject {
         guard let path = aeroSpaceConfigFilePath() else { return }
         guard let imported = windowManagerSectionFromAeroSpaceConfig(atPath: path) else {
             showFailureAlert("Couldn't import AeroSpace's config",
-                             "No workspaces were found in \(path), so nothing was changed. Check that the file has a persistent-workspaces line or alt- workspace keys. Details are in the log: \(logFileURL().path)")
+                             "No workspaces found in \(path).")
             return
         }
         let workspaces = (imported["workspaces"] as? [Any])?.count ?? 0
         let rules = (imported["rules"] as? [Any])?.count ?? 0
         let alert = NSAlert()
-        alert.messageText = "Import from AeroSpace's config?"
+        alert.messageText = "Import from AeroSpace?"
         let counts = "\(workspaces) workspace\(workspaces == 1 ? "" : "s"), \(rules) rule\(rules == 1 ? "" : "s")."
-        let replaces = windowManagerConfig == nil ? "" : " This replaces what's in this tab."
-        alert.informativeText = counts + replaces + " AeroSpace's file is only read."
+        let replaces = windowManagerConfig == nil ? "" : " Replaces your current workspaces."
+        alert.informativeText = counts + replaces
         alert.addButton(withTitle: windowManagerConfig == nil ? "Import" : "Replace")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else {
@@ -961,7 +961,7 @@ struct BrokenFileView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("config.json has an error").font(.title2)
-            Text("The settings window can't change anything until it's fixed, so your file is never overwritten. AeroSwitcher keeps using the last settings that worked.")
+            Text("Fix it to make changes here. The last working settings are in use.")
                 .foregroundStyle(.secondary)
             Text(problem)
                 .font(.system(.callout, design: .monospaced))
@@ -986,16 +986,12 @@ struct GeneralTab: View {
     var body: some View {
         Form {
             Section("Switcher") {
-                Toggle("Show Running / Quit / No window under launcher tiles", isOn: Binding(
+                Toggle("Status text under launcher tiles", isOn: Binding(
                     get: { model.config?.showTileStatusText ?? true },
                     set: { model.setTopLevelBool("showTileStatusText", $0) }))
-                VStack(alignment: .leading, spacing: 4) {
-                    Toggle("Reload config.json by itself when it's saved", isOn: Binding(
-                        get: { model.config?.autoReloadConfig ?? true },
-                        set: { model.setTopLevelBool("autoReloadConfig", $0) }))
-                    Text("Only matters when you edit the file by hand. Changes made in this window always apply at once.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
+                Toggle("Reload config.json when saved", isOn: Binding(
+                    get: { model.config?.autoReloadConfig ?? true },
+                    set: { model.setTopLevelBool("autoReloadConfig", $0) }))
             }
             Section("AeroSwitcher") {
                 Toggle("Launch at login", isOn: Binding(
@@ -1003,25 +999,19 @@ struct GeneralTab: View {
                     set: { _ in model.toggleLaunchAtLogin() }))
             }
             Section("Setup") {
-                Text("Checks the window manager and the permissions AeroSwitcher needs.")
-                    .font(.caption).foregroundStyle(.secondary)
-                Button("Open Setup...") { SetupHelp.shared.show() }
+                Button("Open Setup") { SetupHelp.shared.show() }
             }
             Section("config.json") {
                 Text(configFileURL().path).font(.callout).textSelection(.enabled)
-                Text("Everything in this window is saved to this file the moment you change it. You can still edit the file by hand.")
-                    .font(.caption).foregroundStyle(.secondary)
                 HStack {
-                    Button("Open config.json") { NSWorkspace.shared.open(configFileURL()) }
+                    Button("Open") { NSWorkspace.shared.open(configFileURL()) }
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([configFileURL()]) }
                     // Same as the menu's Reload config.
-                    Button("Reload config") { settings.reloadAndReport() }
+                    Button("Reload") { settings.reloadAndReport() }
                 }
             }
             Section("Log") {
                 Text(logFileURL().path).font(.callout).textSelection(.enabled)
-                Text("What AeroSwitcher did and what went wrong. Look through it before sharing it, it contains file paths.")
-                    .font(.caption).foregroundStyle(.secondary)
                 Button("Show log") {
                     // Selects the file in Finder, or opens the folder if nothing was written yet.
                     if FileManager.default.fileExists(atPath: logFileURL().path) {
@@ -1074,12 +1064,10 @@ struct WorkspaceTilesView: View {
     var body: some View {
         let tiles = model.tiles(in: workspace)
         VStack(alignment: .leading, spacing: 8) {
-            Text("Launcher tiles in \(workspace)").font(.headline)
-            Text("A grey tile shows for each app here that has no window in this workspace. Tiles are always shown in alphabetical order, Running before Quit.")
-                .font(.caption).foregroundStyle(.secondary)
+            Text(workspace).font(.headline)
             if !model.managedWorkspaces.isEmpty && !model.managedWorkspaces.contains(workspace) {
                 HStack {
-                    Text("The Workspaces tab has no workspace called \(workspace), so these tiles never show.")
+                    Text("Not a workspace. These tiles never show.")
                         .foregroundStyle(.orange)
                     Spacer()
                     Button("Remove \(workspace)") { model.removeWorkspace(workspace) }
@@ -1090,11 +1078,11 @@ struct WorkspaceTilesView: View {
                     TileRow(model: model, workspace: workspace, index: index, tile: tile)
                 }
                 if tiles.isEmpty {
-                    Text("No tiles yet.").foregroundStyle(.secondary)
+                    Text("No tiles").foregroundStyle(.secondary)
                 }
             }
             HStack {
-                Button("Add app...") { picking = true }
+                Button("Add App...") { picking = true }
                 Spacer()
             }
         }
@@ -1135,7 +1123,7 @@ struct TileRow: View {
                 if model.helperWarning(forOpen: tile.open) != nil {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
-                        .help("Open leads to a helper app inside another app, see the details")
+                        .help("Opens a helper app, not the app")
                         .accessibilityLabel("Warning: Open leads to a helper app")
                 }
                 Spacer()
@@ -1145,7 +1133,7 @@ struct TileRow: View {
                     Image(systemName: "minus.circle")
                 }
                 .buttonStyle(.borderless)
-                .help("Remove this tile")
+                .help("Remove")
                 .accessibilityLabel("Remove \(tile.name)")
             }
             if expanded {
@@ -1162,17 +1150,13 @@ struct TileRow: View {
             CommitTextField(label: "Match", value: tile.match, required: true, onRefused: { model.notice = $0 }) {
                 model.setTileField("match", to: $0, at: index, in: workspace)
             }
-            Text("The tile hides while a window of an app whose name contains this is open here. It has to match the app's name as macOS shows it.")
-                .font(.caption).foregroundStyle(.secondary)
             CommitTextField(label: "Open", value: tile.open, required: true, onRefused: { model.notice = $0 }) {
                 model.setTileField("open", to: $0, at: index, in: workspace)
             }
-            Text("The name macOS opens the app by, usually its name in the Applications folder.")
-                .font(.caption).foregroundStyle(.secondary)
             if let warning = model.helperWarning(forOpen: tile.open) {
                 // The Roblox Studio problem: see helperAppInside, Config.swift.
                 VStack(alignment: .leading, spacing: 4) {
-                    Label("macOS opens a helper app hidden inside \((warning.outerApp as NSString).lastPathComponent) for this name, not the app itself. It may start and quit at once, so the tile seems to do nothing.",
+                    Label("This opens a helper app, not \((warning.outerApp as NSString).lastPathComponent).",
                           systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(.orange)
@@ -1287,7 +1271,7 @@ struct AppPickerView: View {
                             }
                             Spacer()
                             if alreadyAdded {
-                                Text("already a tile here").font(.caption).foregroundStyle(.secondary)
+                                Text("added").font(.caption).foregroundStyle(.secondary)
                             }
                         }
                         .contentShape(Rectangle())
@@ -1344,7 +1328,9 @@ struct KeysTab: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(keybindDescriptions[name]?.title ?? name)
-                            Text(keybindDescriptions[name]?.detail ?? "").font(.caption).foregroundStyle(.secondary)
+                            if let detail = keybindDescriptions[name]?.detail, !detail.isEmpty {
+                                Text(detail).font(.caption).foregroundStyle(.secondary)
+                            }
                         }
                         Spacer()
                         if model.recordingAction == name {
@@ -1362,24 +1348,21 @@ struct KeysTab: View {
                     }
                 }
             } header: {
-                Text("Keys while the switcher is open (hold Cmd)")
-            } footer: {
-                Text("Every key here only works while Cmd is still held after Cmd+Tab, so it never gets in the way of typing.")
-                    .font(.caption).foregroundStyle(.secondary)
+                Text("While holding Cmd")
             }
             if !model.keybindWarnings.isEmpty {
                 Section("Problems") {
                     ForEach(model.keybindWarnings, id: \.self) { Text($0).foregroundStyle(.orange) }
                 }
             }
-            Section("Fixed, can't be changed") {
-                fixedRow("Open the switcher, next card", "Cmd+Tab")
-                fixedRow("Previous card", "Cmd+Shift+Tab")
-                fixedRow("Overview of every workspace", "Cmd+`")
+            Section("Fixed") {
+                fixedRow("Open switcher", "Cmd+Tab")
+                fixedRow("Open switcher, backwards", "Cmd+Shift+Tab")
+                fixedRow("Overview", "Cmd+`")
             }
             HStack {
                 Spacer()
-                Button("Reset to defaults") { model.resetKeybinds() }
+                Button("Reset") { model.resetKeybinds() }
             }
         }
         .formStyle(.grouped)
@@ -1401,8 +1384,6 @@ struct IconsTab: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top) {
-                Text("Custom icons show in the switcher's launcher tiles and the Cmd+` overview. The image file is not copied, so keep it where it is.")
-                    .font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Button("Use icons from a folder...") { chooseFolder() }
             }
@@ -1415,10 +1396,10 @@ struct IconsTab: View {
                         if let path = row.customPath {
                             Text(path).font(.caption).foregroundStyle(custom == nil ? .red : .secondary)
                             if custom == nil {
-                                Text("This image can't be loaded, the app's own icon is used.").font(.caption).foregroundStyle(.red)
+                                Text("Can't load this image").font(.caption).foregroundStyle(.red)
                             }
                         } else {
-                            Text("The app's own icon").font(.caption).foregroundStyle(.secondary)
+                            Text("Default").font(.caption).foregroundStyle(.secondary)
                         }
                     }
                     Spacer()
@@ -1444,7 +1425,7 @@ struct IconsTab: View {
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.prompt = "Choose"
-        panel.message = "Pick the folder with your icon images. An image named after an app is matched to it (calendar.png goes to Calendar)."
+        panel.message = "Images named after apps, like calendar.png"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         importFolder = url
     }
@@ -1473,11 +1454,11 @@ struct IconFolderImportView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Icons from \((folder.path as NSString).abbreviatingWithTildeInPath)").font(.headline)
-            Text("Matched by file name. Untick anything that's wrong. Nothing is saved until you click Use.")
+            Text("Matched by file name.")
                 .font(.caption).foregroundStyle(.secondary)
             List {
                 if loaded && matches.isEmpty {
-                    Text("No image in this folder is named after one of your apps.").foregroundStyle(.secondary)
+                    Text("No images match your apps.").foregroundStyle(.secondary)
                 }
                 ForEach(matches) { match in
                     HStack {
@@ -1499,10 +1480,8 @@ struct IconFolderImportView: View {
                     }
                 }
                 if !unmatched.isEmpty {
-                    Section("Not matched to any app") {
+                    Section("Not matched") {
                         Text(unmatched.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary)
-                        Text("Rename an image to the app's name, or use Choose image... on that app's row.")
-                            .font(.caption).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -1567,11 +1546,6 @@ struct WorkspacesTab: View {
         let aeroSpaceConfig = aeroSpaceConfigFilePath()
         ScrollView {
             VStack(alignment: .leading, spacing: 6) {
-                Text("AeroSwitcher manages your windows with these workspaces. Right-click an app to move it.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.bottom, 4)
                 if model.windowManagerConfig == nil {
                     emptyState(aeroSpaceConfig: aeroSpaceConfig)
                 } else {
@@ -1631,7 +1605,7 @@ struct WorkspacesTab: View {
                 }
                 .buttonStyle(.borderless)
                 .padding(.vertical, 3)
-                .help("Pick an app: its new windows will open in \(workspace.name)")
+                .help("Add an app")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             HStack(spacing: 2) {
@@ -1666,13 +1640,12 @@ struct WorkspacesTab: View {
 
     private var maximizeRow: some View {
         HStack(spacing: 12) {
-            Toggle("Make every new window fill the screen", isOn: Binding(
+            Toggle("New windows fill the screen", isOn: Binding(
                 get: { model.windowManagerConfig?.maximizeNewWindows ?? true },
                 set: { model.setMaximizeNewWindows($0) }))
             Spacer()
-            Text("Full screen / smaller:")
+            Text("Resize key")
                 .foregroundStyle(.secondary)
-                .help("This key flips the focused window between filling the screen and a centered smaller size.")
             WindowManagerKeyChip(model: model, target: .toggleMaximize)
         }
     }
@@ -1685,7 +1658,7 @@ struct WorkspacesTab: View {
             !model.tiles(in: $0).isEmpty && !model.windowManagerWorkspaceNames.contains($0)
         }
         return ForEach(leftovers, id: \.self) { name in
-            Text("\(name) still has launcher tiles in the Launcher tiles tab.")
+            Text("\(name) still has launcher tiles.")
                 .font(.caption).foregroundStyle(.orange)
         }
     }
@@ -1703,10 +1676,6 @@ struct WorkspacesTab: View {
     private func emptyState(aeroSpaceConfig: String?) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("No workspaces yet").font(.headline)
-            Text(aeroSpaceConfig == nil
-                 ? "Add your first workspace to start."
-                 : "Add your first workspace, or bring in the workspaces and apps from AeroSpace's config.")
-                .font(.callout).foregroundStyle(.secondary)
             HStack {
                 Button("Add Workspace") { model.addWindowManagerWorkspace() }
                 if aeroSpaceConfig != nil { importButton }
@@ -1715,8 +1684,7 @@ struct WorkspacesTab: View {
     }
 
     private var importButton: some View {
-        Button("Import from AeroSpace's Config...") { model.importFromAeroSpace() }
-            .help("Replaces everything in this tab with the workspaces and apps in your AeroSpace config. AeroSpace's file is only read.")
+        Button("Import from AeroSpace...") { model.importFromAeroSpace() }
     }
 
     // MARK: Asking for an app or a text
@@ -1738,7 +1706,7 @@ struct WorkspacesTab: View {
     private func editMatchText(_ current: String, at index: Int) {
         let alert = NSAlert()
         alert.messageText = "Match text"
-        alert.informativeText = "New windows of every app whose place on disk contains this text go to this workspace. Capital letters don't matter. If several match, the longest text wins."
+        alert.informativeText = "Apps whose path contains this text open here."
         let field = NSTextField(string: current)
         field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
         alert.accessoryView = field
@@ -1783,7 +1751,7 @@ struct AppRuleChip: View {
         .padding(.trailing, 7)
         .padding(.vertical, 3)
         .background(Capsule().fill(Color.primary.opacity(0.09)))
-        .help("New windows of apps whose place on disk contains \"\(matchText)\" open in this workspace. Right-click to move it or change the text.")
+        .help("Right-click to move")
         .contextMenu {
             Menu("Move to") {
                 ForEach(otherWorkspaces, id: \.self) { name in
@@ -1827,7 +1795,7 @@ struct WindowManagerKeyChip: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.borderless)
-                .help("Remove the key")
+                .help("Remove key")
                 .accessibilityLabel("Remove the key of \(target.title)")
             }
         }

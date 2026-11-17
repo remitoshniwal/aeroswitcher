@@ -189,24 +189,24 @@ func resolveWindowManager(_ config: WindowManagerConfig?, keybinds: ResolvedKeyb
     for (index, entry) in (config.workspaces ?? []).enumerated() {
         let name = entry.name.trimmingCharacters(in: .whitespaces)
         if name.isEmpty {
-            report.warning("windowManager.workspaces[\(index)] has no name, so it's skipped.")
+            report.warning("windowManager.workspaces[\(index)]: no name, skipped.")
             continue
         }
         if workspaces.contains(where: { $0.name == name }) {
-            report.warning("windowManager.workspaces has \"\(name)\" twice, the second one is skipped.")
+            report.warning("Workspace \"\(name)\" is listed twice, second skipped.")
             continue
         }
         var code: Int64?
         if let key = entry.key, !key.isEmpty {
             if let found = keyCode(forName: key) {
                 if let other = usedKeys[found] {
-                    report.warning("windowManager: \"\(name)\" and \"\(other)\" both use the key \"\(key)\", so \(name) gets no key.")
+                    report.warning("\(name) and \(other) both use \"\(key)\". \(name) gets no key.")
                 } else {
                     code = found
                     usedKeys[found] = name
                 }
             } else {
-                report.warning("windowManager.workspaces \"\(name)\": \"\(key)\" isn't a key AeroSwitcher recognizes, so this workspace gets no key.")
+                report.warning("\(name): unknown key \"\(key)\".")
             }
         }
         workspaces.append(.init(name: name, keyCode: code))
@@ -216,9 +216,9 @@ func resolveWindowManager(_ config: WindowManagerConfig?, keybinds: ResolvedKeyb
     for (index, rule) in (config.rules ?? []).enumerated() {
         let text = rule.app.trimmingCharacters(in: .whitespaces)
         if text.isEmpty {
-            report.warning("windowManager.rules[\(index)] has no app text, so it's skipped.")
+            report.warning("windowManager.rules[\(index)]: no app, skipped.")
         } else if !names.contains(rule.workspace) {
-            report.warning("windowManager.rules[\(index)] (\"\(text)\") sends windows to \"\(rule.workspace)\", which isn't in windowManager.workspaces, so it's skipped.")
+            report.warning("Rule \"\(text)\": no workspace called \"\(rule.workspace)\", skipped.")
         } else {
             rules.append(.init(appPathContains: text, workspace: rule.workspace))
         }
@@ -227,12 +227,12 @@ func resolveWindowManager(_ config: WindowManagerConfig?, keybinds: ResolvedKeyb
     if let key = config.toggleMaximizeKey, !key.isEmpty {
         if let found = keyCode(forName: key) {
             if let other = usedKeys[found] {
-                report.warning("windowManager.toggleMaximizeKey \"\(key)\" is already the key of \"\(other)\", so the maximize toggle gets no key.")
+                report.warning("Resize key \"\(key)\" is used by \(other). Resize key off.")
             } else {
                 toggle = found
             }
         } else {
-            report.warning("windowManager.toggleMaximizeKey is \"\(key)\", which isn't a key AeroSwitcher recognizes, so the maximize toggle gets no key.")
+            report.warning("Resize key: unknown key \"\(key)\".")
         }
     }
     return WindowManagerSettings(workspaces: workspaces, rules: rules, toggleMaximizeKeyCode: toggle,
@@ -436,24 +436,24 @@ func warnAboutUnknownKeys(in data: Data, report: ConfigReport) {
     let keybindKeys: Set = ["cycleNext", "cyclePrevious", "enterGreyedRow", "exitGreyedRow", "pageUp", "pageDown", "confirm", "cancel"]
     let appKeys: Set = ["name", "match", "open", "newWindowStyle", "icon"]
     for key in root.keys.sorted() where !topLevelKeys.contains(key) {
-        report.warning("\"\(key)\" isn't a setting AeroSwitcher knows, so it's ignored. Check the spelling.")
+        report.warning("Unknown setting \"\(key)\", ignored.")
     }
     if let section = root["windowManager"] as? [String: Any] {
         let known: Set = ["workspaces", "rules", "toggleMaximizeKey", "maximizeNewWindows"]
         for key in section.keys.sorted() where !known.contains(key) {
-            report.warning("windowManager.\(key) isn't a window manager setting AeroSwitcher knows, so it's ignored. Check the spelling.")
+            report.warning("Unknown setting windowManager.\(key), ignored.")
         }
     }
     if let keybinds = root["keybinds"] as? [String: Any] {
         for key in keybinds.keys.sorted() where !keybindKeys.contains(key) {
-            report.warning("keybinds.\(key) isn't a keybind AeroSwitcher knows, so it's ignored. Check the spelling.")
+            report.warning("Unknown setting keybinds.\(key), ignored.")
         }
     }
     if let workspaces = root["workspaces"] as? [String: Any] {
         for workspace in workspaces.keys.sorted() {
             for (index, entry) in ((workspaces[workspace] as? [[String: Any]]) ?? []).enumerated() {
                 for key in entry.keys.sorted() where !appKeys.contains(key) {
-                    report.warning("workspaces.\(workspace)[\(index)].\(key) isn't an app setting AeroSwitcher knows, so it's ignored. Check the spelling.")
+                    report.warning("Unknown setting workspaces.\(workspace)[\(index)].\(key), ignored.")
                 }
             }
         }
@@ -471,7 +471,7 @@ func loadCustomIcon(path: String, context: String, report: ConfigReport) -> NSIm
     if let image = NSImage(contentsOfFile: expanded) {
         return image
     }
-    report.warning("\(context) has icon \"\(path)\", which couldn't be loaded as an image, so it's ignored.")
+    report.warning("\(context): can't load icon \"\(path)\".")
     return nil
 }
 
@@ -486,7 +486,7 @@ func resolveLauncherApps(from config: SwitcherConfig, report: ConfigReport) -> [
             case "finder": script = finderNewWindowScript
             case "terminal": script = terminalNewWindowScript
             case .some(let other):
-                report.warning("workspace \"\(workspace)\", app \"\(entry.name)\" has newWindowStyle \"\(other)\", which isn't recognized (only \"finder\" or \"terminal\" are), so it's ignored.")
+                report.warning("\(entry.name) in \(workspace): newWindowStyle must be \"finder\" or \"terminal\".")
                 script = nil
             case nil:
                 script = nil
@@ -851,14 +851,14 @@ func editConfigFile(_ description: String, touching paths: [[String]], shownTree
                     change: (inout [String: Any]) -> Void) -> ConfigEditOutcome {
     let url = configFileWriteURL()
     guard let original = try? Data(contentsOf: url) else {
-        return .refused("Couldn't read \(url.path), so nothing was changed.")
+        return .refused("Couldn't read config.json. Not saved.")
     }
     let before = configSnapshot(of: original)
     guard var tree = before.tree, before.problem == nil else {
-        return .refused("config.json can't be read right now, so nothing was changed. Fix it first: \(before.problem ?? "unknown problem")")
+        return .refused("config.json has an error. Not saved.")
     }
     for path in paths where !sameJSON(configValue(at: path, in: tree), configValue(at: path, in: shownTree)) {
-        return .refused("config.json was changed meanwhile (\(path.joined(separator: "."))), so that wasn't saved. The window now shows the new version, please do it again.")
+        return .refused("config.json changed. Not saved, try again.")
     }
     change(&tree)
     let data = Data(houseStyleJSON(tree).utf8)
@@ -866,7 +866,7 @@ func editConfigFile(_ description: String, touching paths: [[String]], shownTree
         _ = try JSONDecoder().decode(SwitcherConfig.self, from: data)
     } catch {
         logWarn("Settings: refused \"\(description)\", the result wouldn't load: \(describeDecodingError(error))")
-        return .refused("That change would leave config.json unable to load, so it wasn't saved. (\(describeDecodingError(error)))")
+        return .refused("That would break config.json. Not saved.")
     }
     if !configBackupMadeThisRun {
         let backupURL = url.deletingLastPathComponent().appendingPathComponent("config.json.backup")
@@ -875,7 +875,7 @@ func editConfigFile(_ description: String, touching paths: [[String]], shownTree
             configBackupMadeThisRun = true
             logInfo("Settings: copied config.json to \(backupURL.path) before the first change.")
         } catch {
-            return .refused("Couldn't make the backup copy \(backupURL.path), so nothing was changed. (\(error.localizedDescription))")
+            return .refused("Couldn't back up config.json. Not saved.")
         }
     }
     // .atomic writes a complete new file and swaps it in, so a reload can
@@ -1547,20 +1547,18 @@ func launchApp(_ app: LauncherApp) {
             await MainActor.run {
                 if app.newWindowScript == nil {
                     showFailureAlert("Couldn't open \(app.displayName)",
-                        "macOS said: \(errText.isEmpty ? "no reason given" : errText)\n\nCheck the Open name of this tile in Settings > Launcher tiles. Details are in the log (Settings > General > Show log).")
+                        errText.isEmpty ? "Check the tile's Open name in Settings." : errText)
                 } else {
                     // -1743 is macOS saying AeroSwitcher may not control that app yet.
                     let notAllowed = errText.contains("-1743") || errText.lowercased().contains("not authorized")
                     showFailureAlert("Couldn't open a new \(app.displayName) window",
-                        "macOS said: \(errText.isEmpty ? "no reason given" : errText)\n\n"
-                        + (notAllowed ? "Allow AeroSwitcher to control \(app.displayName) in System Settings > Privacy & Security > Automation. " : "")
-                        + "Details are in the log (Settings > General > Show log).")
+                        notAllowed ? "Allow AeroSwitcher in System Settings > Privacy & Security > Automation." : errText)
                 }
             }
         } catch {
             logError("launchApp: couldn't run \(app.newWindowScript == nil ? "open" : "osascript") for \(app.displayName): \(error)")
             await MainActor.run {
-                showFailureAlert("Couldn't open \(app.displayName)", "AeroSwitcher couldn't start the command that opens apps. \(error.localizedDescription)")
+                showFailureAlert("Couldn't open \(app.displayName)", error.localizedDescription)
             }
         }
     }

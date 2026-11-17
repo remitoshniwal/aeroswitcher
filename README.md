@@ -20,6 +20,7 @@ It used to be a companion app for the [AeroSpace](https://github.com/nikitabobko
 - **Left-hand keyboard controls.** Navigate the panel without leaving the Cmd key. All keys are configurable.
 - **Settings window.** Workspaces and app rules, launcher tiles, keys (press a key to record it) and custom icons, without editing a file. Changes apply instantly.
 - **One menu bar icon.** Shows the workspace you're in. Its menu switches workspaces, brings back every window if one ever goes missing, and opens the settings.
+- **Lock icon when keys are blocked.** While a password field is open somewhere, macOS blocks shortcuts for every app. A small lock in the bottom left corner shows when that happens; hover over it to see which app.
 - **Never loses a window.** Hidden windows are moved to the bottom right corner of the screen, and where each one was is written to a file first. Quitting AeroSwitcher puts every window back, and so does the next launch after a crash.
 
 ## What it looks like
@@ -96,6 +97,7 @@ Changes from the settings window apply at once, and hand edits as soon as you sa
 
 - **A window is missing:** menu bar menu > **Bring Back All Windows** puts every window on screen in the workspace you're in.
 - **The menu bar shows a warning triangle:** the window manager is paused. The menu says why (no Accessibility permission, no workspaces, AeroSpace running), and so does the Setup window.
+- **A lock in the bottom left corner:** an app has a password field open, and macOS blocks shortcuts until it closes. Hover over the lock to see which app.
 - **Cmd+Tab still opens the normal macOS switcher:** Accessibility is missing. Open the Setup window (menu bar menu, **Permissions**).
 - **The panel opens but the cards are blank:** Screen Recording is missing. Same window. Screen Recording sometimes only works after AeroSwitcher is restarted, and Setup has a button for that.
 - **Cmd+Tab does nothing at all and the log says "did not answer":** macOS's screenshot service is stuck, not AeroSwitcher. It can happen after another user was logged in on the Mac. Log out any other accounts, and if that doesn't help, restart the Mac.

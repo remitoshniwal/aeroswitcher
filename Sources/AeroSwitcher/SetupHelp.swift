@@ -274,9 +274,9 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
 
     func rows(for s: SetupStatus) -> [SetupRow] {
         var rows: [SetupRow] = []
-        let restartButton = SetupButton(title: "Restart AeroSwitcher") { [weak self] in self?.restart() }
-        let removeAndAdd = "Already switched on but still marked? Select it, remove it with the minus button, then add it again with the plus."
-        let accessibilityTitle = "Accessibility (Cmd+Tab and windows)"
+        let restartButton = SetupButton(title: "Restart") { [weak self] in self?.restart() }
+        let removeAndAdd = "Already on? Remove it with − and add it again with +."
+        let accessibilityTitle = "Accessibility"
 
         // 1. The window manager's own row first: it is what everything else
         // is for.
@@ -294,13 +294,13 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
                 })
             }
             rows.append(SetupRow(id: "manager", mark: reason == "Starting" ? .idle : .bad, title: "Window manager",
-                detail: reason == "Starting" ? "Taking its first look at your windows." : "Paused: \(reason). Your windows are all on screen until this is fixed.",
-                hint: reason == "AeroSpace is running" ? "Also remove AeroSpace from System Settings > General > Login Items, or it starts again at login." : nil,
+                detail: reason == "Starting" ? "Starting..." : "Paused: \(reason)",
+                hint: reason == "AeroSpace is running" ? "Also remove it from Login Items." : nil,
                 buttons: buttons))
         } else {
             let names = windowManagerSettings.workspaceNames
             rows.append(SetupRow(id: "manager", mark: .good, title: "Window manager",
-                detail: "Managing \(names.count) workspaces: \(names.joined(separator: ", ")). Change them in Settings > Workspaces."))
+                detail: names.joined(separator: ", ")))
         }
 
         // 2. Cmd+Tab (Accessibility). The row id stays "input" because the
@@ -308,10 +308,10 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
         // matters for the hook, Input Monitoring stays as a second button
         // because it can't be ruled out for every Mac.
         if s.inputMonitoringOK {
-            rows.append(SetupRow(id: "input", mark: .good, title: accessibilityTitle, detail: "Cmd+Tab and your windows are handled by AeroSwitcher."))
+            rows.append(SetupRow(id: "input", mark: .good, title: accessibilityTitle, detail: "On"))
         } else if s.accessibilityTrusted || s.inputPreflight {
             rows.append(SetupRow(id: "input", mark: .warning, title: accessibilityTitle,
-                detail: "Allowed, but the Cmd+Tab hook hasn't started. Restart AeroSwitcher.",
+                detail: "Allowed. Restart to apply.",
                 buttons: [restartButton]))
         } else {
             var hint = removeAndAdd
@@ -320,26 +320,26 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
                 openPane("input", "Open Input Monitoring", Self.inputMonitoringURL),
             ]
             if returned.contains("input") {
-                hint = "Still marked after switching it on? Restart AeroSwitcher. If it still fails, look at Input Monitoring too."
+                hint = "Still off? Restart, then check Input Monitoring."
                 buttons.append(restartButton)
             }
             rows.append(SetupRow(id: "input", mark: .bad, title: accessibilityTitle,
-                detail: "Required for Cmd+Tab and for managing windows. Switch AeroSwitcher on in the Accessibility list, or add it with the plus button.",
+                detail: "Needed for Cmd+Tab and windows.",
                 hint: hint, buttons: buttons))
         }
 
         // 3. Screen Recording
         if s.screenRecording {
-            rows.append(SetupRow(id: "screen", mark: .good, title: "Screen Recording", detail: "Window previews work."))
+            rows.append(SetupRow(id: "screen", mark: .good, title: "Screen Recording", detail: "On"))
         } else {
             var hint = removeAndAdd
             var buttons = [openPane("screen", "Open Screen Recording", Self.screenRecordingURL)]
             if returned.contains("screen") {
-                hint = "Still marked after switching it on? macOS often applies this only after a restart."
+                hint = "Still off? Restart."
                 buttons.append(restartButton)
             }
             rows.append(SetupRow(id: "screen", mark: .bad, title: "Screen Recording",
-                detail: "Required for window previews. Without it they appear blank.",
+                detail: "Needed for window previews.",
                 hint: hint, buttons: buttons))
         }
 
@@ -391,7 +391,7 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
         } catch {
             logError("Setup: couldn't start the restart helper: \(error)")
             showFailureAlert("Couldn't restart AeroSwitcher",
-                "Quit AeroSwitcher from its menu bar menu and open it again from the Applications folder.")
+                "Quit and open it again.")
         }
     }
 }
@@ -410,7 +410,6 @@ struct SetupView: View {
                         VStack(alignment: .leading, spacing: 8) {
                             Color.clear.frame(height: 0).id("top")
                             ForEach(help.rows(for: status)) { SetupRowView(row: $0) }
-                            accessibilityNote
                         }
                         .padding(.horizontal, 20)
                         .padding(.bottom, 16)
@@ -434,40 +433,21 @@ struct SetupView: View {
         let missing = !status.requiredMissing.isEmpty
         let warnings = status.hasWarnings
         let title = missing ? "Setup needed"
-            : (help.welcome ? "Welcome to AeroSwitcher" : (warnings ? "Almost set" : "You're all set"))
-        let subtitle = missing
-            ? "Fix the items marked with a cross. They update by themselves."
-            : (help.welcome
-                ? "It lives in the menu bar. Click the workspace name there for its menu, or press Cmd+Tab to try it."
-                : (warnings ? "Nothing required is missing. The items marked with ! are worth a look."
-                            : "Everything AeroSwitcher needs is in place."))
+            : (help.welcome ? "Welcome to AeroSwitcher" : (warnings ? "Almost set" : "All set"))
+        let subtitle = missing ? "" : (help.welcome ? "Find it in the menu bar." : "")
         return VStack(alignment: .leading, spacing: 6) {
             Text(title).font(.title2).bold()
-            Text(subtitle).foregroundStyle(.secondary)
+            if !subtitle.isEmpty { Text(subtitle).foregroundStyle(.secondary) }
         }
         .fixedSize(horizontal: false, vertical: true)
         .padding(20)
-    }
-
-    private var accessibilityNote: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Accessibility").font(.headline)
-            Text("AeroSwitcher needs it for Cmd+Tab and to move windows between workspaces (checked above).")
-                .font(.callout).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Button("Open Accessibility") { help.openAccessibilitySettings() }.accessibilityLabel("Open Accessibility")
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.05))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private var footer: some View {
         HStack {
             Toggle("Don't show at launch", isOn: $help.hideAtLaunch)
             Spacer()
-            Button("Check again") { help.refresh() }.accessibilityLabel("Check again")
+            Button("Refresh") { help.refresh() }.accessibilityLabel("Refresh")
             Button("Close") { help.close() }.keyboardShortcut(.cancelAction).accessibilityLabel("Close")
         }
         .padding(14)
