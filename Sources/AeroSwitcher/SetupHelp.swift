@@ -332,6 +332,18 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
     // at login AeroSwitcher can start a few seconds before AeroSpace does,
     // and a popup for that would be wrong every single morning.
     func launchCheck() {
+        // TEST ONLY: a test copy started without the Cmd+Tab hook
+        // (AEROSWITCHER_NO_HOTKEYS) always looks like "Cmd+Tab missing", so
+        // it would pop this window up every time. On 2026-11-17 that window
+        // appeared in the middle of a test and its Restart and System
+        // Settings buttons got clicked, so such a copy never opens it at
+        // launch (Setup... in its menu still works).
+        let environment = ProcessInfo.processInfo.environment
+        if environment["AEROSWITCHER_CONFIG_DIR"] != nil, environment["AEROSWITCHER_NO_HOTKEYS"] == "1" {
+            logInfo("TEST: not opening the Setup window at launch (AEROSWITCHER_NO_HOTKEYS)")
+            refresh()
+            return
+        }
         check(attemptsLeft: 5)
     }
 
