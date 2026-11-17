@@ -40,7 +40,7 @@ It used to be a companion app for the [AeroSpace](https://github.com/nikitabobko
 
 ## Install
 
-**1. Download** `AeroSwitcher-1.0.0.zip` from the [latest release](https://github.com/remitoshniwal/aeroswitcher/releases/latest), double-click it to unzip, and drag **AeroSwitcher** into your **Applications** folder.
+**1. Download** the `AeroSwitcher` zip from the [latest release](https://github.com/remitoshniwal/aeroswitcher/releases/latest), double-click it to unzip, and drag **AeroSwitcher** into your **Applications** folder.
 
 **2. Open it.** The first time, macOS says it can't check the app for malicious software, because AeroSwitcher isn't signed by a paid Apple Developer account. Click **Done** (not Move to Trash), then go to **System Settings > Privacy & Security**, scroll down to the message about AeroSwitcher and click **Open Anyway**. You only do this once.
 

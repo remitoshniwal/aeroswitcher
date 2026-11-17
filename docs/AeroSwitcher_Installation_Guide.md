@@ -6,7 +6,7 @@ There are two ways to get it: download the ready-made app (part A), or build it 
 
 ## A. Download the app
 
-1. Open the [latest release](https://github.com/remitoshniwal/aeroswitcher/releases/latest) and download `AeroSwitcher-1.0.0.zip` (the number may be higher).
+1. Open the [latest release](https://github.com/remitoshniwal/aeroswitcher/releases/latest) and download the `AeroSwitcher-<version>.zip` file.
 2. Double-click the zip in your Downloads folder. It unzips to **AeroSwitcher**.
 3. Drag **AeroSwitcher** into your **Applications** folder. Launch at login only works from there.
 4. Double-click it. macOS says it can't check AeroSwitcher for malicious software. That is because the app isn't signed by a paid Apple Developer account, not because something is wrong with it. Click **Done**. Don't click Move to Trash.
