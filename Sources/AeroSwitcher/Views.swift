@@ -16,7 +16,8 @@ enum PanelStyle {
     static let cardFill = Color(white: 0.11)   // behind a picture, and empty tiles
     static let label = Color.white.opacity(0.72)
     static let labelSelected = Color.white
-    static let selectionAnimation = Animation.easeOut(duration: 0.12)
+    // No animation on purpose: the ring jumps straight to the next card
+    // (the owner found a fade distracting, 2026-11-17).
 }
 
 // The glass the panels sit on: macOS's blur, a little darker, with a
@@ -50,7 +51,6 @@ struct PageDots: View {
                     .frame(width: i == pageIndex ? 16 : 6, height: 6)
             }
         }
-        .animation(PanelStyle.selectionAnimation, value: pageIndex)
     }
 }
 
@@ -149,7 +149,6 @@ private struct ThumbnailCard: View {
                         .padding(-3)
                         .opacity(isSelected ? 1 : 0)
                 )
-                .animation(PanelStyle.selectionAnimation, value: isSelected)
             Text(item.appName)
                 .foregroundColor(isSelected ? PanelStyle.labelSelected : PanelStyle.label)
                 .font(.system(size: 13, weight: .medium))
@@ -276,7 +275,6 @@ private struct LauncherCard: View {
                         .padding(-3)
                         .opacity(isSelected ? 1 : 0)
                 )
-                .animation(PanelStyle.selectionAnimation, value: isSelected)
             Text(app.displayName)
                 .foregroundColor(.white.opacity(isSelected ? 0.9 : (app.isOrphaned ? 0.5 : 0.35)))
                 .font(.system(size: 13, weight: .medium))

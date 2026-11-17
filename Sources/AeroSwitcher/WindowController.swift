@@ -1142,6 +1142,8 @@ class SwitcherWindowController: NSObject {
         // also when the Mac is in light mode.
         win.appearance = NSAppearance(named: .darkAqua)
         win.hasShadow = true
+        // Appears and disappears at once, no fade.
+        win.animationBehavior = .none
         win.level = .floating
         win.contentView = hosting
         self.window = win
