@@ -143,6 +143,8 @@ Task { @MainActor in
     // Anything wrong in config.json at launch gets the same window a
     // reload would show, instead of only a print nobody sees.
     ConfigProblemsWindow.shared.update(report: settings.lastReport, aerospace: nil)
+    // TEST ONLY, see testSettingsTab (SettingsWindow.swift).
+    if testSettingsTab() != nil { SettingsWindow.shared.show() }
 }
 
 // AeroSpace's version goes into the log too (asked in the background, it's a

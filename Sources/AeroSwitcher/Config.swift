@@ -120,9 +120,13 @@ struct SwitcherConfig: Codable {
 //   optional: Option+key goes to that workspace, Option+Shift+key sends the
 //   focused window there.
 // - rules: a NEW window whose app's place on disk CONTAINS the "app" text
-//   (capital letters don't matter) goes to that workspace. The first rule
-//   that matches wins. No match: it stays in the workspace you're in. Same
-//   idea as the `on-window-detected` rules in .aerospace.toml.
+//   (capital letters don't matter) goes to that workspace. If several
+//   match, the LONGEST text wins (the most specific one: "RobloxStudio"
+//   beats "Roblox"), so the order of the rules doesn't matter and the
+//   Settings tab can show them grouped by workspace. No match: it stays in
+//   the workspace you're in. Same idea as the `on-window-detected` rules in
+//   .aerospace.toml, where the FIRST match wins instead (changed
+//   2026-11-17; for the owner's 19 rules both give the same result).
 // - toggleMaximizeKey: Option+that key flips the focused window between
 //   filling the screen and a centered 70% size (AeroSpace's alt-f).
 // - maximizeNewWindows: every new real window fills the screen. Missing
@@ -159,10 +163,16 @@ struct WindowManagerSettings {
 
     var workspaceNames: [String] { workspaces.map(\.name) }
 
-    // The first rule whose text is inside the path (capital letters ignored).
+    // The rule whose text is inside the path (capital letters ignored); if
+    // several are, the one with the longest text. Two rules with the same
+    // length: the one written first.
     func workspace(forBundlePath path: String) -> String? {
         let lowered = path.lowercased()
-        return rules.first { lowered.contains($0.appPathContains.lowercased()) }?.workspace
+        var best: Rule?
+        for rule in rules where lowered.contains(rule.appPathContains.lowercased()) {
+            if rule.appPathContains.count > (best?.appPathContains.count ?? -1) { best = rule }
+        }
+        return best?.workspace
     }
 
     func workspace(forKeyCode keyCode: Int64) -> String? {
