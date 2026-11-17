@@ -257,6 +257,38 @@ final class SettingsModel: ObservableObject {
         return report.warnings
     }
 
+    // The second key of an action ("" = none), see defaultSecondKeys.
+    func currentSecondKey(for action: String) -> String {
+        secondKeyNames(config?.keybinds ?? KeybindConfig())[action] ?? ""
+    }
+
+    func clearSecondKey(_ action: String) { setSecondKey(action, "") }
+
+    // Writes the whole "second" section, so the defaults (the arrows)
+    // are written out the first time any second key changes.
+    private func setSecondKey(_ action: String, _ name: String) {
+        let current = secondKeyNames(config?.keybinds ?? KeybindConfig())
+        edit("set keybinds.second.\(action) = \(name)", touching: [["keybinds"]]) { tree in
+            var keybinds = tree["keybinds"] as? [String: Any] ?? [:]
+            var second = keybinds["second"] as? [String: Any] ?? current
+            second[action] = name
+            keybinds["second"] = second
+            tree["keybinds"] = keybinds
+        }
+    }
+
+    // Which action already uses this key, as main or second key, leaving
+    // out the slot being recorded.
+    private func actionUsing(_ code: Int64, except slot: String) -> String? {
+        guard let config else { return nil }
+        for action in keybindActions {
+            if action.name != slot, keyCode(forName: config.keybinds[keyPath: action.keyPath]) == code { return action.name }
+            if "second.\(action.name)" != slot, let name = secondKeyNames(config.keybinds)[action.name],
+               keyCode(forName: name) == code { return action.name }
+        }
+        return nil
+    }
+
     func startRecording(_ action: String) {
         stopRecording()
         recordingAction = action
@@ -293,6 +325,23 @@ final class SettingsModel: ObservableObject {
         }
         if code == 48 {
             notice = "Tab is reserved for Cmd+Tab."
+            NSSound.beep()
+            return
+        }
+        // A second key: refused if anything else uses it (no swapping).
+        if action.hasPrefix("second.") {
+            let base = String(action.dropFirst("second.".count))
+            if let other = actionUsing(code, except: action), other != base || keyCode(forName: currentKey(for: base)) == code {
+                notice = "\(keyDisplayName(name)) is used by \(keybindDescriptions[other]?.title ?? other)."
+                NSSound.beep()
+                return
+            }
+            setSecondKey(base, name)
+            return
+        }
+        // A main key that is some action's second key: refused too.
+        if let other = keybindActions.first(where: { keyCode(forName: secondKeyNames(config.keybinds)[$0.name] ?? "") == code }) {
+            notice = "\(keyDisplayName(name)) is the second key of \(keybindDescriptions[other.name]?.title ?? other.name)."
             NSSound.beep()
             return
         }
@@ -336,6 +385,7 @@ final class SettingsModel: ObservableObject {
             // Unknown keys inside "keybinds" are left alone.
             var keybinds = tree["keybinds"] as? [String: Any] ?? [:]
             for action in keybindActions { keybinds[action.name] = defaults[keyPath: action.keyPath] }
+            keybinds["second"] = nil  // back to the default second keys
             tree["keybinds"] = keybinds
         }
     }
@@ -1330,30 +1380,23 @@ struct KeysTab: View {
         Form {
             Section {
                 ForEach(keybindActions.map { $0.name }, id: \.self) { name in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(keybindDescriptions[name]?.title ?? name)
-                            if let detail = keybindDescriptions[name]?.detail, !detail.isEmpty {
-                                Text(detail).font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
+                    HStack(spacing: 10) {
+                        Text(keybindDescriptions[name]?.title ?? name)
                         Spacer()
-                        if model.recordingAction == name {
-                            Text("Press a key…").foregroundStyle(Color.accentColor)
-                            Button("Cancel") { model.stopRecording() }
-                        } else {
-                            Text(keyDisplayName(model.currentKey(for: name)))
-                                .font(.body.monospaced())
-                                .frame(minWidth: 70)
-                                .padding(.vertical, 2)
-                                .background(Color.primary.opacity(0.07))
-                                .clipShape(RoundedRectangle(cornerRadius: 4))
-                            Button("Record") { model.startRecording(name) }
+                        KeyChip(model: model, slot: name, key: model.currentKey(for: name), clearable: false)
+                        KeyChip(model: model, slot: "second.\(name)", key: model.currentSecondKey(for: name), clearable: true) {
+                            model.clearSecondKey(name)
                         }
                     }
                 }
             } header: {
-                Text("While holding Cmd")
+                HStack {
+                    Text("While holding ⌘")
+                    Spacer()
+                    Button("Reset") { model.resetKeybinds() }
+                        .buttonStyle(.borderless)
+                        .font(.callout)
+                }
             }
             if !model.keybindWarnings.isEmpty {
                 Section("Problems") {
@@ -1361,24 +1404,74 @@ struct KeysTab: View {
                 }
             }
             Section("Fixed") {
-                fixedRow("Open switcher", "Cmd+Tab")
-                fixedRow("Open switcher, backwards", "Cmd+Shift+Tab")
-                fixedRow("Overview", "Cmd+`")
-            }
-            HStack {
-                Spacer()
-                Button("Reset") { model.resetKeybinds() }
+                fixedRow("Open switcher", ["⌘", "Tab"])
+                fixedRow("Open switcher, backwards", ["⌘", "⇧", "Tab"])
+                fixedRow("Overview", ["⌘", "`"])
             }
         }
         .formStyle(.grouped)
     }
 
-    private func fixedRow(_ title: String, _ keys: String) -> some View {
+    private func fixedRow(_ title: String, _ keys: [String]) -> some View {
         HStack {
             Text(title)
             Spacer()
-            Text(keys).font(.body.monospaced()).foregroundStyle(.secondary)
+            HStack(spacing: 4) {
+                ForEach(keys, id: \.self) { Keycap(label: $0).opacity(0.7) }
+            }
         }
+    }
+}
+
+// One key drawn like a key on a keyboard.
+struct Keycap: View {
+    let label: String
+    var highlighted = false
+
+    var body: some View {
+        Text(label)
+            .font(.system(size: 12, weight: .medium))
+            .frame(minWidth: 22)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.primary.opacity(highlighted ? 0.14 : 0.07)))
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(highlighted ? Color.accentColor : Color.primary.opacity(0.12), lineWidth: 1))
+    }
+}
+
+// A key in the Keys tab: click it, then press the new key. A second key
+// can be empty ("+") and has an ✕ to clear it.
+struct KeyChip: View {
+    @ObservedObject var model: SettingsModel
+    let slot: String
+    let key: String
+    let clearable: Bool
+    var onClear: () -> Void = {}
+
+    var body: some View {
+        let recording = model.recordingAction == slot
+        HStack(spacing: 2) {
+            Button {
+                recording ? model.stopRecording() : model.startRecording(slot)
+            } label: {
+                Keycap(label: recording ? "Press a key" : (key.isEmpty ? "+" : keyDisplayName(key)), highlighted: recording)
+                    .foregroundStyle(key.isEmpty && !recording ? .secondary : .primary)
+            }
+            .buttonStyle(.plain)
+            .help(recording ? "Press a key, or click to stop" : "Click to change")
+            if clearable {
+                Button(action: onClear) {
+                    Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)).foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .opacity(key.isEmpty ? 0 : 1)
+                .disabled(key.isEmpty)
+                .help("Remove")
+            }
+        }
+        .frame(width: clearable ? 110 : 96, alignment: .trailing)
     }
 }
 

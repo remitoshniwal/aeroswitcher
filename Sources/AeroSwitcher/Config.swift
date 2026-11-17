@@ -43,6 +43,11 @@ struct KeybindConfig: Codable {
     // still a natural reach for the same hand.
     var confirm: String = "f"          // was: return
     var cancel: String = "escape"
+    // A second key per action, by action name: {"cycleNext": "right"}.
+    // Missing (nil) means the defaults in defaultSecondKeys (Keybinds.swift):
+    // the arrow keys for D/A/S/W. "" or a missing action means no second
+    // key. Optional so older files still load.
+    var second: [String: String]? = nil
 }
 
 struct LauncherAppConfig: Codable {
@@ -435,7 +440,7 @@ func describeDecodingError(_ error: Error) -> String {
 func warnAboutUnknownKeys(in data: Data, report: ConfigReport) {
     guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
     let topLevelKeys: Set = ["keybinds", "workspaces", "showTileStatusText", "showWorkspacesInMenu", "icons", "autoReloadConfig", "windowManager"]
-    let keybindKeys: Set = ["cycleNext", "cyclePrevious", "enterGreyedRow", "exitGreyedRow", "pageUp", "pageDown", "confirm", "cancel"]
+    let keybindKeys: Set = ["cycleNext", "cyclePrevious", "enterGreyedRow", "exitGreyedRow", "pageUp", "pageDown", "confirm", "cancel", "second"]
     let appKeys: Set = ["name", "match", "open", "newWindowStyle", "icon"]
     for key in root.keys.sorted() where !topLevelKeys.contains(key) {
         report.warning("Unknown setting \"\(key)\", ignored.")
@@ -922,7 +927,7 @@ func editConfigFile(_ description: String, touching paths: [[String]], shownTree
 
 let topLevelKeyOrder = ["keybinds", "workspaces", "showTileStatusText", "showWorkspacesInMenu", "autoReloadConfig", "icons", "windowManager"]
 let windowManagerKeyOrder = ["workspaces", "rules", "toggleMaximizeKey", "maximizeNewWindows"]
-let keybindKeyOrder = ["cycleNext", "cyclePrevious", "enterGreyedRow", "exitGreyedRow", "pageUp", "pageDown", "confirm", "cancel"]
+let keybindKeyOrder = ["cycleNext", "cyclePrevious", "enterGreyedRow", "exitGreyedRow", "pageUp", "pageDown", "confirm", "cancel", "second"]
 let appEntryKeyOrder = ["name", "match", "open", "newWindowStyle", "icon"]
 
 func houseStyleJSON(_ tree: [String: Any]) -> String {

@@ -126,7 +126,9 @@ class HotkeyManager {
         }
 
         if type == .keyDown {
-            let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+            // A second key (the arrows by default) counts as its action's
+            // main key from here on, see ResolvedKeybinds.primary.
+            let keyCode = keybinds.primary(event.getIntegerValueField(.keyboardEventKeycode))
 
             if keyCode == 48 && event.flags.contains(.maskCommand) { // Tab key while Cmd held
                 let reverse = event.flags.contains(.maskShift)
@@ -214,7 +216,7 @@ class HotkeyManager {
         // key release, or any release while the overview isn't open, is
         // passed through untouched below.
         if type == .keyUp && controller.isOpen && controller.showingAllWorkspaces {
-            let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+            let keyCode = keybinds.primary(event.getIntegerValueField(.keyboardEventKeycode))
             if keyCode == keybinds.enterGreyedRow || keyCode == keybinds.exitGreyedRow {
                 controller.overviewScrollReleased()
                 return nil

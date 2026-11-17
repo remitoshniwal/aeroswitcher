@@ -53,7 +53,25 @@ let keybindActions: [(name: String, keyPath: WritableKeyPath<KeybindConfig, Stri
     ("confirm", \.confirm), ("cancel", \.cancel),
 ]
 
+// The second keys a config without a "second" section gets: the arrows,
+// next to D/A/S/W. Change them here for different defaults.
+let defaultSecondKeys: [String: String] = [
+    "cycleNext": "right", "cyclePrevious": "left", "enterGreyedRow": "down", "exitGreyedRow": "up",
+]
+
+// The second keys in use: the file's "second" section, or the defaults when
+// it has none. An action missing here, or set to "", has no second key.
+func secondKeyNames(_ config: KeybindConfig) -> [String: String] {
+    config.second ?? defaultSecondKeys
+}
+
 struct ResolvedKeybinds {
+    // Each second key's code, pointing at its action's main key code. The
+    // event tap turns a second key into the main one before anything else
+    // looks at it (primary(_:)), so every action works with either key.
+    var secondToPrimary: [Int64: Int64] = [:]
+    func primary(_ code: Int64) -> Int64 { secondToPrimary[code] ?? code }
+
     let cycleNext: Int64
     let cyclePrevious: Int64
     let enterGreyedRow: Int64
@@ -71,7 +89,7 @@ func resolveKeybinds(_ config: KeybindConfig, report: ConfigReport) -> ResolvedK
         report.warning("keybinds.\(label): unknown key \"\(configured)\", using \"\(fallback)\".")
         return keyCode(forName: fallback)!  // the built-in defaults are always valid names
     }
-    let resolved = ResolvedKeybinds(
+    var resolved = ResolvedKeybinds(
         cycleNext: resolve("cycleNext", config.cycleNext, fallback: defaults.cycleNext),
         cyclePrevious: resolve("cyclePrevious", config.cyclePrevious, fallback: defaults.cyclePrevious),
         enterGreyedRow: resolve("enterGreyedRow", config.enterGreyedRow, fallback: defaults.enterGreyedRow),
@@ -102,6 +120,25 @@ func resolveKeybinds(_ config: KeybindConfig, report: ConfigReport) -> ResolvedK
         if named[i].1 == 48 {
             report.warning("keybinds.\(named[i].0): Tab is reserved for Cmd+Tab.")
         }
+    }
+
+    // Second keys. One that clashes with a main key or another second key
+    // is skipped (and named in the problems window), never guessed at.
+    let primaries = Dictionary(named, uniquingKeysWith: { first, _ in first })
+    for (action, name) in secondKeyNames(config).sorted(by: { $0.key < $1.key }) where !name.isEmpty {
+        guard let primary = primaries[action] else {
+            report.warning("Unknown setting keybinds.second.\(action), ignored.")
+            continue
+        }
+        guard let code = keyCode(forName: name) else {
+            report.warning("keybinds.second.\(action): unknown key \"\(name)\".")
+            continue
+        }
+        if code == 48 || primaries.values.contains(code) || resolved.secondToPrimary[code] != nil {
+            report.warning("keybinds.second.\(action): \(keyDisplayName(name)) is already used.")
+            continue
+        }
+        resolved.secondToPrimary[code] = primary
     }
 
     return resolved

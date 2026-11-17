@@ -168,7 +168,6 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                     item.target = self
                     item.representedObject = name
                     item.state = name == snapshot.focused ? .on : .off
-                    item.attributedTitle = workspaceRowTitle(name: name, apps: snapshot.apps[name] ?? [])
                     // Its Option key, shown on the right like any menu
                     // shortcut (and it works while the menu is open).
                     if let key = keys[name] ?? nil, key.count == 1 {
@@ -231,21 +230,6 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menuItem.target = self
         if let symbol { menuItem.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) }
         return menuItem
-    }
-
-    // The workspace name, then the apps in it in smaller grey text, cut
-    // off after about 25 characters.
-    private func workspaceRowTitle(name: String, apps: [String]) -> NSAttributedString {
-        let result = NSMutableAttributedString(string: name, attributes: [.font: NSFont.menuFont(ofSize: 0)])
-        if !apps.isEmpty {
-            var list = apps.joined(separator: ", ")
-            if list.count > 25 { list = list.prefix(24) + "…" }
-            result.append(NSAttributedString(string: "   " + list, attributes: [
-                .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
-                .foregroundColor: NSColor.tertiaryLabelColor,
-            ]))
-        }
-        return result
     }
 
     // MARK: Permissions
