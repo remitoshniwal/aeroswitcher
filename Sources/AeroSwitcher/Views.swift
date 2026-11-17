@@ -869,14 +869,14 @@ final class SecureInputIndicator {
         let pid = secureInputPID()
         if panel?.isVisible != true || pid != shownPID {
             shownPID = pid
-            update(appName: pid.flatMap { NSRunningApplication(processIdentifier: $0)?.localizedName })
+            update(appName: pid.flatMap { processName($0) })
         }
     }
 
     private func update(appName: String?) {
         logInfo("Secure input: on (\(appName ?? "unknown app")), Cmd+Tab and Option keys are blocked")
         if panel == nil { makePanel() }
-        hoverView?.message = "Shortcuts are blocked while \(appName ?? "an app") has a password field open."
+        hoverView?.message = appName.map { "Shortcuts blocked by a password field in \($0)" } ?? "Shortcuts blocked by a password field"
         hoverView?.collapse()
         place(expanded: false)
         panel?.orderFrontRegardless()
@@ -907,17 +907,31 @@ final class SecureInputIndicator {
         panel.setFrame(NSRect(x: area.minX + 16, y: area.minY + 16, width: size.width, height: size.height), display: true)
     }
 
+    // The app's name, or for a process that isn't an app (the password
+    // prompt macOS shows itself is "SecurityAgent") its program name.
+    private func processName(_ pid: pid_t) -> String? {
+        if let name = NSRunningApplication(processIdentifier: pid)?.localizedName { return name }
+        var buffer = [CChar](repeating: 0, count: 256)
+        return proc_name(pid, &buffer, UInt32(buffer.count)) > 0 ? String(cString: buffer) : nil
+    }
+
     // Which process turned secure input on. macOS keeps it in the
     // console user's session info (kCGSSessionSecureInputPID), readable
     // without any permission. nil if it isn't there.
     private func secureInputPID() -> pid_t? {
-        let root = IORegistryEntryFromPath(kIOMainPortDefault, "IOService:/")
+        // The registry's root entry (not "IOService:/", which has no
+        // IOConsoleUsers, checked 2026-11-17).
+        let root = IORegistryGetRootEntry(kIOMainPortDefault)
         guard root != 0 else { return nil }
         defer { IOObjectRelease(root) }
         guard let users = IORegistryEntryCreateCFProperty(root, "IOConsoleUsers" as CFString, kCFAllocatorDefault, 0)?
                 .takeRetainedValue() as? [[String: Any]] else { return nil }
         for user in users {
-            if let pid = user["kCGSSessionSecureInputPID"] as? Int, pid > 0 { return pid_t(pid) }
+            // Never name AeroSwitcher itself: seen in testing when a
+            // background program turned secure input on while one of
+            // AeroSwitcher's windows was in front.
+            if let pid = user["kCGSSessionSecureInputPID"] as? Int, pid > 0,
+               pid_t(pid) != ProcessInfo.processInfo.processIdentifier { return pid_t(pid) }
         }
         return nil
     }
@@ -936,7 +950,7 @@ final class SecureInputHoverView: NSView {
     private(set) var expanded = false
 
     var expandedSize: NSSize {
-        let textWidth = min(label.intrinsicContentSize.width, 360)
+        let textWidth = min(label.intrinsicContentSize.width, 600)
         return NSSize(width: iconSize.width + textWidth + 14, height: iconSize.height)
     }
 
