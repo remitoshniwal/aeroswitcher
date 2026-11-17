@@ -104,7 +104,7 @@ AeroSwitcher can do AeroSpace's job itself: show one workspace, hide the others,
 
 **Log lines** start with `WorkspaceManager:` (`Core -> School, 3 shown, 2 parked`, `new windows: ...`, `paused: ...`). Window titles are never logged.
 
-**Known limits:** only tested with one display. Switching to an empty workspace leaves the previous app in front, and clicking that same app's Dock icon then does nothing (press its workspace key instead). An app that moves its own window back on screen while parked is parked again at the next update. Windows of an app that answers slowly appear in Cmd+Tab a moment late.
+**Known limits:** only tested with one display. Switching to an empty workspace puts AeroSwitcher itself in front (so keys don't go into a hidden window); click any app or press a workspace key to carry on. Windows of an app that macOS reports as hidden (Cmd+H) are never parked, like in AeroSpace; an app started in the background by a script can count as hidden until it first comes to the front, so its windows stay visible in another workspace until then (seen with TextEdit in testing). An app that moves its own window back on screen while parked is parked again at the next update. Windows of an app that answers slowly appear in Cmd+Tab a moment late.
 
 ### Taking the screenshots
 

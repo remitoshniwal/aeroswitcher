@@ -553,6 +553,12 @@ final class WorkspaceManager: @unchecked Sendable {
             unpark(window)
             shown += 1
         }
+        // Debug log only (AEROSWITCHER_DEBUG=1): a window of a hidden
+        // workspace that is NOT being parked, and why. Added after the first
+        // switch in the 2026-11-17 test parked nothing, for no visible reason.
+        for (id, window) in tracked where workspaceOf[id] != focusedWorkspace && parked[id] == nil && !shouldBeParked(window) {
+            logDebug("WorkspaceManager: not parking \(id) \(window.appName): minimized=\(window.minimized) fullscreen=\(window.fullscreen) appHidden=\(window.appHidden) workspace=\(workspaceOf[id] ?? "none")")
+        }
         for (id, window) in tracked where shouldBeParked(window) {
             if parked[id] == nil {
                 if park(window) { hidden += 1 }
@@ -572,7 +578,10 @@ final class WorkspaceManager: @unchecked Sendable {
     // file: remember where it was, write that to the file, only then move.
     private func park(_ window: TrackedWindow) -> Bool {
         let id = window.id
-        guard let known = window.frame, let point = parkPoint(for: window) else { return false }
+        guard let known = window.frame, let point = parkPoint(for: window) else {
+            logDebug("WorkspaceManager: can't park \(id) \(window.appName): frame=\(window.frame.map { "\($0)" } ?? "unknown")")
+            return false
+        }
         // Never remember the parking corner itself as "where it was".
         let frame = ScreenLayout.shared.looksParked(known) ? fallbackFrame(size: known.size) : known
         parked[id] = Parked(pid: window.pid, frame: frame, needsResize: false)
@@ -656,8 +665,22 @@ final class WorkspaceManager: @unchecked Sendable {
             ?? inWorkspace.sorted().first
         if let target {
             nativeFocus(target)
+        } else {
+            focusNothing()
         }
         publish()
+    }
+
+    // The workspace you are now in has no window to focus. Without this the
+    // app you were in stays in front with its now hidden window, so typing
+    // would go into a window you can't see, and clicking that app in the
+    // Dock would do nothing (it is already in front, so macOS sends no "app
+    // came to the front" news; found in the 2026-11-17 test). So AeroSwitcher
+    // itself takes the front for a moment: keys go nowhere, and the next app
+    // you click comes to the front for real, which shows its workspace.
+    private func focusNothing() {
+        pendingFocus = nil
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     // Option+Shift+key: send the focused window to another workspace. You
@@ -687,6 +710,8 @@ final class WorkspaceManager: @unchecked Sendable {
         if let next = recent[from]?.first(where: { tracked[$0] != nil })
             ?? tracked.keys.filter({ workspaceOf[$0] == from }).sorted().first {
             nativeFocus(next)
+        } else {
+            focusNothing()
         }
         publish()
     }
@@ -750,9 +775,13 @@ final class WorkspaceManager: @unchecked Sendable {
         for id in Array(workspaceOf.keys) {
             workspaceOf[id] = focusedWorkspace
         }
+        let justShown = Set(parked.keys)
         count += unparkAll()
         let (all, _) = WindowTracker.shared.currentWindows()
-        for window in all where parked[window.id] == nil {
+        // Windows unparked a line above still have their corner position in
+        // the tracker's list (it updates a moment later), so they are skipped
+        // here or they'd be moved a second time, to the wrong place.
+        for window in all where parked[window.id] == nil && !justShown.contains(window.id) {
             if let only = testOnlyApps, !only.contains(window.appName) { continue }
             guard let frame = window.frame, ScreenLayout.shared.looksParked(frame) else { continue }
             let target = fallbackFrame(size: frame.size).origin
