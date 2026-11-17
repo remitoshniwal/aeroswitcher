@@ -488,7 +488,13 @@ final class WorkspaceManager: @unchecked Sendable {
             }
         }
         if !newWindows.isEmpty {
-            logInfo("WorkspaceManager: new windows: " + newWindows.map { "\($0.id) \($0.appName) -> \(workspaceOf[$0.id] ?? "?")" }.joined(separator: ", "))
+            // Kind, subrole and size too (never the title): on 2026-11-17 a
+            // new Chrome window appeared every 6 to 8 seconds for 11 minutes
+            // and the log couldn't say what they were.
+            logInfo("WorkspaceManager: new windows: " + newWindows.map { window in
+                let size = window.frame.map { "\(Int($0.width))x\(Int($0.height))" } ?? "?"
+                return "\(window.id) \(window.appName) \(window.kind.rawValue) \(window.subrole) \(size) -> \(workspaceOf[window.id] ?? "?")"
+            }.joined(separator: ", "))
         }
         if savedAtLaunch != nil && now.timeIntervalSince(startedAt) > 60 { savedAtLaunch = nil }
         if firstPass {
@@ -752,6 +758,7 @@ final class WorkspaceManager: @unchecked Sendable {
         if let current = window.frame, WindowSizing.near(current, frame) { return }
         tracked[id]?.frame = frame
         WindowSizing.setFrame(pid: window.pid, windowId: id, frame)
+        logInfo("WorkspaceManager: made new window \(id) (\(window.appName)) fill the screen")
     }
 
     // Cmd+Tab (and the overview) picked a window: show its workspace and
