@@ -1029,7 +1029,10 @@ class SwitcherWindowController: NSObject {
 
     private func currentView() -> SwitcherView {
         let data = pageData()
-        let selectedItemID = items.indices.contains(selectedIndex) ? items[selectedIndex].id : nil
+        // Only one ring at a time: while a launcher tile is selected the
+        // window card keeps its place (W goes back to it) but isn't drawn
+        // as selected.
+        let selectedItemID = (launcherSelectedIndex == nil && items.indices.contains(selectedIndex)) ? items[selectedIndex].id : nil
         let selectedLauncherID = launcherSelectedIndex.flatMap {
             launcherItems.indices.contains($0) ? launcherItems[$0].id : nil
         }

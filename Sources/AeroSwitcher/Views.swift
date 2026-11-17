@@ -707,7 +707,7 @@ private struct WorkspaceAppIcon: View {
                     // normal icon (solid, full opacity) and the launcher
                     // row's fully-placeholder dashed-square icon (which
                     // means "not even running").
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: PanelStyle.cardRadius, style: .continuous)
                         .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
                         .foregroundColor(.white.opacity(0.4))
                         .frame(width: iconSize, height: iconSize)
