@@ -993,13 +993,18 @@ struct GeneralTab: View {
                     get: { model.config?.autoReloadConfig ?? true },
                     set: { model.setTopLevelBool("autoReloadConfig", $0) }))
             }
+            Section("Menu Bar") {
+                Toggle("Show workspaces in the menu", isOn: Binding(
+                    get: { model.config?.showWorkspacesInMenu ?? true },
+                    set: { model.setTopLevelBool("showWorkspacesInMenu", $0) }))
+            }
             Section("AeroSwitcher") {
                 Toggle("Open at Login", isOn: Binding(
                     get: { model.launchAtLogin },
                     set: { _ in model.toggleLaunchAtLogin() }))
             }
-            Section("Setup") {
-                Button("Open Setup") { SetupHelp.shared.show() }
+            Section("Permissions") {
+                Button("Check Permissions…") { SetupHelp.shared.show() }
             }
             Section("config.json") {
                 Text(configFileURL().path).font(.callout).textSelection(.enabled)

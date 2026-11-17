@@ -137,7 +137,9 @@ Task { @MainActor in
     // reload would show, instead of only a print nobody sees.
     ConfigProblemsWindow.shared.update(report: settings.lastReport)
     // TEST ONLY, see testSettingsTab (SettingsWindow.swift).
-    if testSettingsTab() != nil { SettingsWindow.shared.show() }
+    if let tab = testSettingsTab() {
+        if tab == "Permissions" { SetupHelp.shared.show() } else { SettingsWindow.shared.show() }
+    }
 }
 
 app.run()

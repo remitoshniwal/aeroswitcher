@@ -104,7 +104,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private func showName(_ name: String?, on button: NSStatusBarButton) {
         button.image = nil
         button.imagePosition = .noImage
-        button.font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        button.font = NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .medium)
         button.title = name ?? "…"
         button.toolTip = nil
     }
@@ -150,37 +150,50 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         SetupHelp.shared.refresh()
     }
 
+    // The menu, top to bottom: the workspaces (unless switched off in
+    // Settings > General), the window rescue and reload, then Settings,
+    // Permissions, About and Quit. Each item has a small symbol, like the
+    // system menus in macOS 26; change a symbol by its name in
+    // item(_:_:symbol:).
     private func buildMenu(_ menu: NSMenu) {
         menu.removeAllItems()
         menu.autoenablesItems = false  // so an item set to disabled below stays disabled
 
-        if snapshot.hasWorkspaces {
-            menu.addItem(NSMenuItem.sectionHeader(title: "Workspaces"))
-            for name in snapshot.names {
-                let item = NSMenuItem(title: name, action: #selector(workspaceClicked(_:)), keyEquivalent: "")
-                item.target = self
-                item.representedObject = name
-                item.state = name == snapshot.focused ? .on : .off
-                item.attributedTitle = workspaceRowTitle(name: name, apps: snapshot.apps[name] ?? [])
+        if settings.current.config.showWorkspacesInMenu ?? true {
+            if snapshot.hasWorkspaces {
+                let keys = Dictionary(windowManagerSettings.workspaces.map { ($0.name, $0.keyCode.flatMap(keyName(forCode:))) },
+                                      uniquingKeysWith: { first, _ in first })
+                for name in snapshot.names {
+                    let item = NSMenuItem(title: name, action: #selector(workspaceClicked(_:)), keyEquivalent: "")
+                    item.target = self
+                    item.representedObject = name
+                    item.state = name == snapshot.focused ? .on : .off
+                    item.attributedTitle = workspaceRowTitle(name: name, apps: snapshot.apps[name] ?? [])
+                    // Its Option key, shown on the right like any menu
+                    // shortcut (and it works while the menu is open).
+                    if let key = keys[name] ?? nil, key.count == 1 {
+                        item.keyEquivalent = key.lowercased()
+                        item.keyEquivalentModifierMask = [.option]
+                    }
+                    menu.addItem(item)
+                }
+            } else {
+                let item = NSMenuItem(title: "No Workspaces", action: nil, keyEquivalent: "")
+                item.isEnabled = false
                 menu.addItem(item)
             }
-        } else {
-            let item = NSMenuItem(title: "No workspaces", action: nil, keyEquivalent: "")
-            item.isEnabled = false
-            menu.addItem(item)
+            menu.addItem(.separator())
         }
-
-        menu.addItem(.separator())
 
         // Paused shows on its own line too, so the reason is readable
         // without hovering over the icon.
         if let reason = WorkspaceManager.shared.pausedReason {
-            let paused = NSMenuItem(title: "Paused: \(reason)", action: nil, keyEquivalent: "")
+            let paused = item("Paused: \(reason)", nil, symbol: "exclamationmark.triangle")
             paused.isEnabled = false
             menu.addItem(paused)
         }
-        menu.addItem(item("Bring Back All Windows", #selector(bringBackClicked)))
-        menu.addItem(item("Reload config", #selector(reloadClicked)))
+        menu.addItem(item("Bring Back All Windows", #selector(bringBackClicked), symbol: "macwindow.on.rectangle"))
+        menu.addItem(item("Reload Config", #selector(reloadClicked), symbol: "arrow.clockwise"))
 
         menu.addItem(.separator())
         addRestOfMenu(menu)
@@ -190,98 +203,52 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         // Holding Option while the menu is open swaps it for "Open
         // config.json" (a standard macOS menu trick: an "alternate" item
         // with the same key and Option added).
-        let settingsItem = item("Settings…", #selector(settingsClicked))
+        let settingsItem = item("Settings…", #selector(settingsClicked), symbol: "gearshape")
         settingsItem.keyEquivalent = ","
         settingsItem.keyEquivalentModifierMask = [.command]
         menu.addItem(settingsItem)
-        let openConfig = item("Open config.json", #selector(openConfigJSONClicked))
+        let openConfig = item("Open config.json", #selector(openConfigJSONClicked), symbol: "doc.text")
         openConfig.keyEquivalent = ","
         openConfig.keyEquivalentModifierMask = [.command, .option]
         openConfig.isAlternate = true
         menu.addItem(openConfig)
-        menu.addItem(permissionsItem())
-        let login = item("Open at Login", #selector(launchAtLoginClicked))
-        login.state = SMAppService.mainApp.status == .enabled ? .on : .off
-        menu.addItem(login)
-        menu.addItem(item("About AeroSwitcher", #selector(aboutClicked)))
-        menu.addItem(item("Quit AeroSwitcher", #selector(quitClicked)))
+        // Opens the Permissions window. The symbol turns into a warning
+        // while something there needs attention.
+        let status = SetupHelp.shared.statusForMenu()
+        let needsAttention = status.map { !$0.requiredMissing.isEmpty } ?? false
+        menu.addItem(item("Permissions…", #selector(setupHelpClicked),
+                          symbol: needsAttention ? "exclamationmark.triangle.fill" : "lock.shield"))
+        menu.addItem(.separator())
+        menu.addItem(item("About AeroSwitcher", #selector(aboutClicked), symbol: "info.circle"))
+        let quit = item("Quit AeroSwitcher", #selector(quitClicked), symbol: "power")
+        quit.keyEquivalent = "q"
+        quit.keyEquivalentModifierMask = [.command]
+        menu.addItem(quit)
     }
 
-    private func item(_ title: String, _ action: Selector) -> NSMenuItem {
+    private func item(_ title: String, _ action: Selector?, symbol: String? = nil) -> NSMenuItem {
         let menuItem = NSMenuItem(title: title, action: action, keyEquivalent: "")
         menuItem.target = self
+        if let symbol { menuItem.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) }
         return menuItem
     }
 
-    // "Core" in the normal text, then the apps in it in smaller grey text,
-    // cut off after about 25 characters.
+    // The workspace name, then the apps in it in smaller grey text, cut
+    // off after about 25 characters.
     private func workspaceRowTitle(name: String, apps: [String]) -> NSAttributedString {
-        let mono = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-        let result = NSMutableAttributedString(string: name, attributes: [.font: mono])
+        let result = NSMutableAttributedString(string: name, attributes: [.font: NSFont.menuFont(ofSize: 0)])
         if !apps.isEmpty {
             var list = apps.joined(separator: ", ")
             if list.count > 25 { list = list.prefix(24) + "…" }
             result.append(NSAttributedString(string: "   " + list, attributes: [
                 .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
-                .foregroundColor: NSColor.secondaryLabelColor,
+                .foregroundColor: NSColor.tertiaryLabelColor,
             ]))
         }
         return result
     }
 
     // MARK: Permissions
-
-    // Built from the same check as the setup help window (SetupHelp.swift),
-    // so the two always agree. Everything there only LOOKS at permissions,
-    // nothing pops up a macOS dialog. The first check runs at launch; until
-    // it has answered the submenu says so.
-    private func permissionsItem() -> NSMenuItem {
-        guard let status = SetupHelp.shared.statusForMenu() else {
-            let parent = NSMenuItem(title: "Permissions", action: nil, keyEquivalent: "")
-            let submenu = NSMenu()
-            let checking = NSMenuItem(title: "Checking…", action: nil, keyEquivalent: "")
-            checking.isEnabled = false
-            submenu.addItem(checking)
-            parent.submenu = submenu
-            return parent
-        }
-        let allGood = status.requiredMissing.isEmpty && !status.hasWarnings
-
-        let parent = NSMenuItem(title: allGood ? "Permissions" : "Permissions ⚠︎", action: nil, keyEquivalent: "")
-        let submenu = NSMenu()
-        submenu.autoenablesItems = false
-        // mark: "✓" fine, "✗" missing, "!" optional or unclear. A row with a
-        // page to open (url) or a window to open (opensSetup) is clickable
-        // while it isn't fine.
-        func row(_ title: String, mark: String, url: String? = nil, opensSetup: Bool = false) {
-            let clickable = mark != "✓" && (url != nil || opensSetup)
-            let row = NSMenuItem(title: "\(mark)  \(title)", action: clickable ? #selector(permissionRowClicked(_:)) : nil, keyEquivalent: "")
-            row.target = self
-            row.representedObject = url ?? ""
-            row.isEnabled = clickable
-            submenu.addItem(row)
-        }
-        let cmdTabAllowed = status.accessibilityTrusted || status.inputPreflight
-        row("Window manager", mark: status.managerPausedReason == nil ? "✓" : "✗", opensSetup: true)
-        row("Accessibility", mark: status.inputMonitoringOK ? "✓" : "✗",
-            url: cmdTabAllowed ? nil : "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
-            opensSetup: cmdTabAllowed)
-        row("Screen Recording", mark: status.screenRecording ? "✓" : "✗",
-            url: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
-        submenu.addItem(.separator())
-        submenu.addItem(item("Setup…", #selector(setupHelpClicked)))
-        parent.submenu = submenu
-        return parent
-    }
-
-    @objc private func permissionRowClicked(_ sender: NSMenuItem) {
-        if let string = sender.representedObject as? String, !string.isEmpty, let url = URL(string: string) {
-            logInfo("Menu: open System Settings page \(string)")
-            NSWorkspace.shared.open(url)
-        } else {
-            setupHelpClicked()
-        }
-    }
 
     @objc private func setupHelpClicked() {
         logInfo("Menu: setup help")

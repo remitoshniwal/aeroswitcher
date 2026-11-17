@@ -233,17 +233,21 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
         self.welcome = welcome
         if window == nil {
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 620, height: 600),
+                contentRect: NSRect(x: 0, y: 0, width: 480, height: 300),
                 styleMask: [.titled, .closable],
                 backing: .buffered,
                 defer: false)
-            window.title = "AeroSwitcher Setup"
+            window.title = "Permissions"
             window.isReleasedWhenClosed = false
             window.delegate = self
             // Floating, so it stays visible above System Settings (which
             // fills the screen) while the user flips a switch there.
             window.level = .floating
-            window.contentView = NSHostingView(rootView: SetupView(help: self))
+            // The window follows the view's height, so it grows when a
+            // row shows buttons and shrinks again when everything is fine.
+            let controller = NSHostingController(rootView: SetupView(help: self))
+            controller.sizingOptions = [.preferredContentSize]
+            window.contentViewController = controller
             window.center()
             self.window = window
         }
@@ -401,114 +405,124 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
 struct SetupView: View {
     @ObservedObject var help: SetupHelp
 
+    // Laid out like a System Settings page: a header with the app icon,
+    // then one rounded group with a row per check. The window takes the
+    // height it needs (see present()), so there is no empty space.
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 18) {
             if let status = help.latest {
                 header(status)
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Color.clear.frame(height: 0).id("top")
-                            ForEach(help.rows(for: status)) { SetupRowView(row: $0) }
-                        }
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 16)
+                VStack(spacing: 0) {
+                    let rows = help.rows(for: status)
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                        SetupRowView(row: row)
+                        if index < rows.count - 1 { Divider().padding(.leading, 54) }
                     }
-                    // The list is taller than the window when several things
-                    // are missing. It must start at the top, not wherever
-                    // the first layout left it.
-                    .onAppear { DispatchQueue.main.async { proxy.scrollTo("top", anchor: .top) } }
                 }
+                .background(Color.primary.opacity(0.045))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
             } else {
-                Text("Checking…").foregroundStyle(.secondary).padding(24)
-                Spacer()
+                Text("Checking…").foregroundStyle(.secondary)
             }
-            Divider()
             footer
         }
-        .frame(width: 620, height: 600)
+        .padding(22)
+        .frame(width: 480)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private func header(_ status: SetupStatus) -> some View {
         let missing = !status.requiredMissing.isEmpty
-        let warnings = status.hasWarnings
-        let title = missing ? "Setup needed"
-            : (help.welcome ? "Welcome to AeroSwitcher" : (warnings ? "Almost set" : "All set"))
-        let subtitle = missing ? "" : (help.welcome ? "Find it in the menu bar." : "")
-        return VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.system(size: 22, weight: .semibold))
-            if !subtitle.isEmpty { Text(subtitle).foregroundStyle(.secondary) }
+        let title = missing ? "Needs Attention" : (help.welcome ? "Welcome to AeroSwitcher" : "All Set")
+        let subtitle = missing ? "Turn on what's missing below." : (help.welcome ? "Find it in the menu bar." : "Everything is working.")
+        return HStack(spacing: 14) {
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .frame(width: 52, height: 52)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.system(size: 20, weight: .semibold))
+                Text(subtitle).font(.callout).foregroundStyle(.secondary)
+            }
         }
-        .fixedSize(horizontal: false, vertical: true)
-        .padding(20)
     }
 
     private var footer: some View {
         HStack {
             Toggle("Don't show at launch", isOn: $help.hideAtLaunch)
+                .toggleStyle(.checkbox)
+                .font(.callout)
+                .foregroundStyle(.secondary)
             Spacer()
-            Button("Refresh") { help.refresh() }.accessibilityLabel("Refresh")
-            Button("Close") { help.close() }.keyboardShortcut(.cancelAction).accessibilityLabel("Close")
+            Button("Done") { help.close() }
+                .keyboardShortcut(.defaultAction)
+                .controlSize(.large)
+                .accessibilityLabel("Done")
         }
-        .padding(14)
     }
 }
 
 struct SetupRowView: View {
     let row: SetupRow
 
-    private var symbol: (name: String, color: Color) {
-        switch row.mark {
-        case .good: return ("checkmark.circle.fill", .green)
-        case .bad: return ("xmark.circle.fill", .red)
-        case .warning: return ("exclamationmark.triangle.fill", .yellow)
-        case .idle: return ("circle.dashed", .secondary)
+    // The colored tile on the left, like the icons in System Settings.
+    // Change a row's symbol or color here.
+    private var tile: (symbol: String, color: Color) {
+        switch row.id {
+        case "manager": return ("square.stack.3d.up.fill", .indigo)
+        case "input": return ("accessibility", .blue)
+        case "screen": return ("record.circle", .pink)
+        default: return ("gearshape.fill", .gray)
         }
     }
 
-    // Rows that are fine take less room, so the window needs no scrolling
-    // when nothing is wrong.
-    private var compact: Bool { row.mark == .good || row.mark == .idle }
+    // The status on the right.
+    private var status: (symbol: String, color: Color) {
+        switch row.mark {
+        case .good: return ("checkmark.circle.fill", .green)
+        case .bad: return ("xmark.circle.fill", .red)
+        case .warning: return ("exclamationmark.circle.fill", .orange)
+        case .idle: return ("circle.dotted", .secondary)
+        }
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: symbol.name)
-                .foregroundStyle(symbol.color)
-                .font(.title3)
-                .frame(width: 24, height: 24)
-            VStack(alignment: .leading, spacing: compact ? 2 : 6) {
-                Text(row.title).font(.headline)
+            Image(systemName: tile.symbol)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 28, height: 28)
+                .background(tile.color.gradient)
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(row.title).font(.system(size: 13, weight: .medium))
                 Text(row.detail)
-                    .font(compact ? .caption : .callout).foregroundStyle(.secondary)
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                if let code = row.codeBlock {
-                    Text(code)
-                        .font(.system(.caption, design: .monospaced))
-                        .textSelection(.enabled)
-                        .padding(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.primary.opacity(0.07))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                }
                 if let hint = row.hint {
                     Text(hint)
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.system(size: 11)).foregroundStyle(.tertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if !row.buttons.isEmpty {
-                    HStack {
+                    HStack(spacing: 8) {
                         ForEach(row.buttons) { button in
-                            Button(button.title, action: button.action).accessibilityLabel(button.title)
+                            Button(button.title, action: button.action)
+                                .controlSize(.small)
+                                .accessibilityLabel(button.title)
                         }
                     }
+                    .padding(.top, 5)
                 }
             }
-            Spacer(minLength: 0)
+            Spacer(minLength: 8)
+            Image(systemName: status.symbol)
+                .font(.system(size: 17))
+                .foregroundStyle(status.color)
+                .padding(.top, 5)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, compact ? 8 : 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.04))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
     }
 }

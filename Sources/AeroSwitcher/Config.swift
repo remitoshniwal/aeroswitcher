@@ -83,6 +83,8 @@ struct SwitcherConfig: Codable {
     // keep working exactly as before, and only files that explicitly set it
     // to false actually change anything.
     var showTileStatusText: Bool? = nil
+    // The workspace list at the top of the menu bar menu. nil means on.
+    var showWorkspacesInMenu: Bool? = nil
     // Custom icons for apps that AREN'T necessarily in "workspaces" at
     // all — LauncherAppConfig's own "icon" field (above) only exists on
     // entries already inside some workspace's roster, so it can't help an
@@ -432,7 +434,7 @@ func describeDecodingError(_ error: Error) -> String {
 // the decode above already checked the values.
 func warnAboutUnknownKeys(in data: Data, report: ConfigReport) {
     guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
-    let topLevelKeys: Set = ["keybinds", "workspaces", "showTileStatusText", "icons", "autoReloadConfig", "windowManager"]
+    let topLevelKeys: Set = ["keybinds", "workspaces", "showTileStatusText", "showWorkspacesInMenu", "icons", "autoReloadConfig", "windowManager"]
     let keybindKeys: Set = ["cycleNext", "cyclePrevious", "enterGreyedRow", "exitGreyedRow", "pageUp", "pageDown", "confirm", "cancel"]
     let appKeys: Set = ["name", "match", "open", "newWindowStyle", "icon"]
     for key in root.keys.sorted() where !topLevelKeys.contains(key) {
@@ -918,7 +920,7 @@ func editConfigFile(_ description: String, touching paths: [[String]], shownTree
 // order name, match, open, newWindowStyle, icon, then unknown ones. To
 // change the layout, change the key orders here.
 
-let topLevelKeyOrder = ["keybinds", "workspaces", "showTileStatusText", "autoReloadConfig", "icons", "windowManager"]
+let topLevelKeyOrder = ["keybinds", "workspaces", "showTileStatusText", "showWorkspacesInMenu", "autoReloadConfig", "icons", "windowManager"]
 let windowManagerKeyOrder = ["workspaces", "rules", "toggleMaximizeKey", "maximizeNewWindows"]
 let keybindKeyOrder = ["cycleNext", "cyclePrevious", "enterGreyedRow", "exitGreyedRow", "pageUp", "pageDown", "confirm", "cancel"]
 let appEntryKeyOrder = ["name", "match", "open", "newWindowStyle", "icon"]
