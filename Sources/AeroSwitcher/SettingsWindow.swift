@@ -193,6 +193,23 @@ final class SettingsModel: ObservableObject {
         }
     }
 
+    // Drag and drop in the Launcher tiles tab: a tile moved to another
+    // workspace, in one change (removed there, added here).
+    func moveTile(at index: Int, from source: String, to target: String) {
+        guard source != target, let tile = tiles(in: source)[safe: index] else { return }
+        edit("move \(tile.name) from \(source) to \(target)", touching: [["workspaces", source], ["workspaces", target]]) { tree in
+            var workspaces = tree["workspaces"] as? [String: Any] ?? [:]
+            var from = workspaces[source] as? [Any] ?? []
+            guard from.indices.contains(index) else { return }
+            let entry = from.remove(at: index)
+            var to = workspaces[target] as? [Any] ?? []
+            to.append(entry)
+            workspaces[source] = from.isEmpty ? nil : from
+            workspaces[target] = to
+            tree["workspaces"] = workspaces
+        }
+    }
+
     func removeWorkspace(_ workspace: String) {
         edit("remove workspace \(workspace)", touching: [["workspaces", workspace]]) { tree in
             var workspaces = tree["workspaces"] as? [String: Any] ?? [:]
@@ -539,6 +556,19 @@ final class SettingsModel: ObservableObject {
         }
     }
 
+    // Drag and drop in the Workspaces tab: a workspace dropped on another
+    // one takes that one's place.
+    func moveWindowManagerWorkspace(from index: Int, to target: Int) {
+        guard index != target else { return }
+        changeWindowManager("move windowManager.workspaces[\(index)] to \(target)") { section in
+            var list = Self.entries("workspaces", in: section)
+            guard list.indices.contains(index), list.indices.contains(target) else { return }
+            let entry = list.remove(at: index)
+            list.insert(entry, at: target)
+            section["workspaces"] = list
+        }
+    }
+
     // "+ App" on a workspace card: a rule for that app, sent to that
     // workspace. If the same text already has a rule, that rule is moved
     // here instead of adding a second one.
@@ -811,6 +841,38 @@ final class SettingsModel: ObservableObject {
         }
     }
 
+    // The apps of one workspace for the Icons tab: its launcher tiles and
+    // the apps its rules send there (Workspaces tab), each once.
+    func iconRows(forWorkspace workspace: String) -> [IconRow] {
+        guard let config else { return [] }
+        var rows: [IconRow] = []
+        func add(_ row: IconRow) {
+            if !rows.contains(where: { namesMatch($0.key, row.key) }) { rows.append(row) }
+        }
+        let tiles = config.workspaces[workspace] ?? []
+        for tile in tiles {
+            add(IconRow(key: tile.match, label: tile.name, customPath: tile.icon ?? customIconPath(tile.match),
+                        appIcon: appIcon(match: tile.match, open: tile.open), names: [tile.name, tile.match, tile.open]))
+        }
+        for rule in windowManagerRules where rule.workspace == workspace {
+            let look = ruleLook(rule.app)
+            add(IconRow(key: look.title, label: look.title, customPath: customIconPath(look.title),
+                        appIcon: look.icon, names: [look.title, rule.app]))
+        }
+        return rows
+    }
+
+    // Apps with a custom icon or running now that no workspace lists.
+    func otherIconRows() -> [IconRow] {
+        let inWorkspaces = workspaceNames.flatMap { iconRows(forWorkspace: $0) }
+        return iconRows().filter { row in !inWorkspaces.contains { namesMatch($0.key, row.key) } }
+    }
+
+    // The "icons" entry for an app name, ignoring capitals.
+    private func customIconPath(_ name: String) -> String? {
+        config?.icons?.first { $0.key.caseInsensitiveCompare(name) == .orderedSame }?.value
+    }
+
     // MARK: Icons from a folder
 
     struct IconFolderMatch: Identifiable {
@@ -832,7 +894,7 @@ final class SettingsModel: ObservableObject {
     // Each app gets at most one image: an exact match beats a close one,
     // then the shorter file name wins. Only the folder itself is looked
     // at, not folders inside it.
-    func matchIcons(inFolder folder: URL) -> (matches: [IconFolderMatch], unmatched: [String]) {
+    func matchIcons(inFolder folder: URL, rows only: [IconRow]? = nil) -> (matches: [IconFolderMatch], unmatched: [String]) {
         let files = ((try? FileManager.default.contentsOfDirectory(
             at: folder, includingPropertiesForKeys: [.contentTypeKey], options: [.skipsHiddenFiles])) ?? [])
             .filter { (try? $0.resourceValues(forKeys: [.contentTypeKey]))?.contentType?.conforms(to: .image) == true }
@@ -841,7 +903,7 @@ final class SettingsModel: ObservableObject {
             name.lowercased().filter { $0.isLetter || $0.isNumber }
         }
         var matches: [IconFolderMatch] = []
-        for row in iconRows() {
+        for row in only ?? iconRows() {
             let names = row.names.map(simplified).filter { !$0.isEmpty }
             var best: (file: URL, exact: Bool)?
             for file in files {
@@ -1081,124 +1143,180 @@ struct GeneralTab: View {
     }
 }
 
+// MARK: Shared pieces of the Workspaces, Launcher tiles and Icons tabs
+//
+// All three tabs show one card per workspace with its apps as small chips
+// (icon, name, ✕), so they look and work the same. Change the card or
+// chip look here and all three follow.
+
+// The card behind one workspace. `targeted` lights the edge while
+// something is dragged over it.
+struct WorkspaceCardStyle: ViewModifier {
+    var targeted = false
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        content
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(shape.fill(Color.primary.opacity(targeted ? 0.09 : 0.045)))
+            .overlay(shape.strokeBorder(targeted ? Color.accentColor : Color.primary.opacity(0.07), lineWidth: targeted ? 1.5 : 1))
+    }
+}
+
+// One app as a chip: its icon, its name, and a ✕ when it can be removed.
+struct AppChip: View {
+    let title: String
+    let icon: NSImage
+    var warning = false
+    var accent = false   // a small dot after the name (the Icons tab: a custom icon is set)
+    var onRemove: (() -> Void)? = nil
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(nsImage: icon)
+                .resizable()
+                .frame(width: 16, height: 16)
+            Text(title)
+                .lineLimit(1)
+            if warning {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.orange)
+            }
+            if accent {
+                Circle().fill(Color.accentColor).frame(width: 5, height: 5)
+            }
+            if let onRemove {
+                Button(action: onRemove) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .help("Remove \(title)")
+                .accessibilityLabel("Remove \(title)")
+            }
+        }
+        .padding(.leading, 6)
+        .padding(.trailing, onRemove == nil ? 9 : 7)
+        .padding(.vertical, 3)
+        .background(Capsule().fill(Color.primary.opacity(0.09)))
+        .contentShape(Capsule())
+    }
+}
+
+// "+ App" at the end of a card's chips.
+struct AddAppButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label("App", systemImage: "plus").font(.callout)
+        }
+        .buttonStyle(.borderless)
+        .padding(.vertical, 3)
+        .help("Add an app")
+    }
+}
+
+// MARK: Launcher tiles tab
+
+// One card per workspace with its grey tiles as chips. Click a chip for
+// its details, drag it onto another card to move it there.
 struct LauncherTab: View {
     @ObservedObject var model: SettingsModel
+    @State private var pickingFor: String?
+    @State private var dropTarget: String?
 
     var body: some View {
-        HStack(spacing: 0) {
-            List(model.workspaceNames, id: \.self, selection: $model.selectedWorkspace) { name in
-                HStack {
-                    Text(name)
-                    Spacer()
-                    if !model.managedWorkspaces.isEmpty && !model.managedWorkspaces.contains(name) {
-                        Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
-                    }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                if model.workspaceNames.isEmpty {
+                    Text("No workspaces yet. Add them in the Workspaces tab.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(model.workspaceNames, id: \.self) { workspace in
+                    card(workspace)
                 }
             }
-            .frame(width: 170)
-            Divider()
-            if let workspace = model.selectedWorkspace {
-                WorkspaceTilesView(model: model, workspace: workspace).id(workspace)
-            } else {
-                // Empty until workspaces are added in the Workspaces tab.
-                Text(model.managedWorkspaces.isEmpty
-                     ? "No workspaces yet. Add them in the Workspaces tab."
-                     : "Pick a workspace")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(20)
+        }
+        .sheet(isPresented: Binding(get: { pickingFor != nil }, set: { if !$0 { pickingFor = nil } })) {
+            if let pickingFor {
+                AppPickerView(model: model, workspace: pickingFor,
+                              isPresented: Binding(get: { self.pickingFor != nil }, set: { if !$0 { self.pickingFor = nil } }))
             }
+        }
+    }
+
+    private func card(_ workspace: String) -> some View {
+        let tiles = model.tiles(in: workspace)
+        let known = model.managedWorkspaces.isEmpty || model.managedWorkspaces.contains(workspace)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(workspace).font(.system(size: 13, weight: .semibold))
+                if !known {
+                    Text("Not a workspace").font(.caption).foregroundStyle(.orange)
+                    Spacer()
+                    Button("Remove") { model.removeWorkspace(workspace) }.controlSize(.small)
+                }
+            }
+            FlowLayout(spacing: 6) {
+                ForEach(Array(tiles.enumerated()), id: \.offset) { index, tile in
+                    TileChip(model: model, workspace: workspace, index: index, tile: tile)
+                        .draggable("tile:\(index):\(workspace)") {
+                            AppChip(title: tile.name, icon: model.icon(forTile: tile))
+                        }
+                }
+                AddAppButton { pickingFor = workspace }
+            }
+        }
+        .modifier(WorkspaceCardStyle(targeted: dropTarget == workspace))
+        .dropDestination(for: String.self) { items, _ in
+            guard let item = items.first, item.hasPrefix("tile:") else { return false }
+            let parts = item.dropFirst("tile:".count).split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let index = Int(parts[0]) else { return false }
+            model.moveTile(at: index, from: parts[1], to: workspace)
+            return true
+        } isTargeted: { targeted in
+            if targeted { dropTarget = workspace } else if dropTarget == workspace { dropTarget = nil }
         }
     }
 }
 
-struct WorkspaceTilesView: View {
+// One grey tile as a chip. Click it to change its name, match text, how
+// it opens, or its new-window style.
+struct TileChip: View {
     @ObservedObject var model: SettingsModel
     let workspace: String
-    @State private var picking = false
+    let index: Int
+    let tile: LauncherAppConfig
+    @State private var showingDetails = false
 
     var body: some View {
-        let tiles = model.tiles(in: workspace)
-        VStack(alignment: .leading, spacing: 8) {
-            Text(workspace).font(.headline)
-            if !model.managedWorkspaces.isEmpty && !model.managedWorkspaces.contains(workspace) {
-                HStack {
-                    Text("Not a workspace. These tiles never show.")
-                        .foregroundStyle(.orange)
-                    Spacer()
-                    Button("Remove \(workspace)") { model.removeWorkspace(workspace) }
-                }
+        AppChip(title: tile.name, icon: model.icon(forTile: tile),
+                warning: model.helperWarning(forOpen: tile.open) != nil,
+                onRemove: { model.removeTile(at: index, from: workspace) })
+            .onTapGesture { showingDetails = true }
+            .help("Click for details, drag to move")
+            .popover(isPresented: $showingDetails, arrowEdge: .bottom) {
+                TileDetailsView(model: model, workspace: workspace, index: index, tile: tile)
+                    .padding(14)
+                    .frame(width: 380)
             }
-            List {
-                ForEach(Array(tiles.enumerated()), id: \.offset) { index, tile in
-                    TileRow(model: model, workspace: workspace, index: index, tile: tile)
-                }
-                if tiles.isEmpty {
-                    Text("No tiles").foregroundStyle(.secondary)
-                }
-            }
-            HStack {
-                Button("Add App…") { picking = true }
-                Spacer()
-            }
-        }
-        .padding(.leading, 12)
-        .sheet(isPresented: $picking) {
-            AppPickerView(model: model, workspace: workspace, isPresented: $picking)
-        }
     }
 }
 
-struct TileRow: View {
+struct TileDetailsView: View {
     @ObservedObject var model: SettingsModel
     let workspace: String
     let index: Int
     let tile: LauncherAppConfig
 
-    @State private var expanded = false
-
-    // A plain arrow button instead of SwiftUI's DisclosureGroup: with a
-    // DisclosureGroup the remove button had to sit inside its title, where
-    // SwiftUI merges it into the title for accessibility (VoiceOver, and
-    // testing scripts, couldn't press it), and moved outside it the list
-    // stopped drawing the arrow at all.
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Button {
-                    expanded.toggle()
-                } label: {
-                    Image(systemName: expanded ? "chevron.down" : "chevron.right").frame(width: 14)
-                }
-                .buttonStyle(.borderless)
-                .accessibilityLabel(expanded ? "Hide details of \(tile.name)" : "Show details of \(tile.name)")
-                Image(nsImage: model.icon(forTile: tile)).resizable().frame(width: 24, height: 24)
-                Text(tile.name)
-                // Visible without opening the row: this tile's Open text
-                // leads to a helper app (details below).
-                if model.helperWarning(forOpen: tile.open) != nil {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                        .help("Opens a helper app, not the app")
-                        .accessibilityLabel("Warning: Open leads to a helper app")
-                }
-                Spacer()
-                Button {
-                    model.removeTile(at: index, from: workspace)
-                } label: {
-                    Image(systemName: "minus.circle")
-                }
-                .buttonStyle(.borderless)
-                .help("Remove")
-                .accessibilityLabel("Remove \(tile.name)")
-            }
-            if expanded {
-                details.padding(.leading, 22)
-            }
-        }
-    }
-
-    private var details: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             CommitTextField(label: "Name", value: tile.name, required: true, onRefused: { model.notice = $0 }) {
                 model.setTileField("name", to: $0, at: index, in: workspace)
             }
@@ -1219,19 +1337,110 @@ struct TileRow: View {
                     Button("Use \(warning.outerApp) instead") {
                         model.setTileField("open", to: warning.outerApp, at: index, in: workspace)
                     }
+                    .controlSize(.small)
                 }
-                .frame(maxWidth: 420, alignment: .leading)
             }
             Picker("New window", selection: Binding(
                 get: { tile.newWindowStyle?.lowercased() ?? "" },
                 set: { model.setTileField("newWindowStyle", to: $0.isEmpty ? nil : $0, at: index, in: workspace) })) {
                 Text("Normal").tag("")
-                Text("Finder (always a new window)").tag("finder")
-                Text("Terminal (always a new window)").tag("terminal")
+                Text("Finder (always new)").tag("finder")
+                Text("Terminal (always new)").tag("terminal")
             }
-            .frame(maxWidth: 360)
         }
-        .padding(.vertical, 4)
+    }
+}
+
+// MARK: Icons tab
+
+// The same workspace cards, each app with the icon it shows now (a dot
+// after the name = a custom icon). Click an app to pick an image,
+// right-click to go back to its own icon. "From Folder…" on a card sets
+// that workspace's icons from a folder of images named after the apps;
+// the one at the top does every app.
+struct IconsTab: View {
+    @ObservedObject var model: SettingsModel
+    // The folder being imported and which apps it may change.
+    @State private var importing: (folder: URL, rows: [SettingsModel.IconRow]?)?
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Spacer()
+                    Button("All from Folder…") { chooseFolder(rows: nil) }
+                }
+                ForEach(model.workspaceNames, id: \.self) { workspace in
+                    card(title: workspace, rows: model.iconRows(forWorkspace: workspace))
+                }
+                let others = model.otherIconRows()
+                if !others.isEmpty {
+                    card(title: "Other Apps", rows: others)
+                }
+            }
+            .padding(20)
+        }
+        .task { await model.loadInstalledAppsForIcons() }
+        .sheet(isPresented: Binding(get: { importing != nil }, set: { if !$0 { importing = nil } })) {
+            if let importing {
+                IconFolderImportView(model: model, folder: importing.folder, rows: importing.rows) { self.importing = nil }
+            }
+        }
+    }
+
+    private func card(title: String, rows: [SettingsModel.IconRow]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(title).font(.system(size: 13, weight: .semibold))
+                Spacer()
+                if !rows.isEmpty {
+                    Button("From Folder…") { chooseFolder(rows: rows) }
+                        .buttonStyle(.borderless)
+                        .font(.callout)
+                }
+            }
+            if rows.isEmpty {
+                Text("No apps").font(.callout).foregroundStyle(.tertiary)
+            } else {
+                FlowLayout(spacing: 6) {
+                    ForEach(rows) { row in
+                        let custom = row.customPath.flatMap { NSImage(contentsOfFile: ($0 as NSString).expandingTildeInPath) }
+                        AppChip(title: row.label, icon: custom ?? row.appIcon, warning: row.customPath != nil && custom == nil,
+                                accent: custom != nil)
+                            .onTapGesture { chooseImage(for: row.key) }
+                            .help(row.customPath.map { "Custom icon: \($0). Click to change." } ?? "Click to choose an icon")
+                            .contextMenu {
+                                Button("Choose Image…") { chooseImage(for: row.key) }
+                                if row.customPath != nil {
+                                    Button("Use Default Icon") { model.setIcon(path: nil, for: row.key) }
+                                }
+                            }
+                    }
+                }
+            }
+        }
+        .modifier(WorkspaceCardStyle())
+    }
+
+    // Pick a folder, then a sheet shows which image goes to which app
+    // before anything is saved. rows nil = every app.
+    private func chooseFolder(rows: [SettingsModel.IconRow]?) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
+        panel.message = "Images named after apps, like calendar.png"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        importing = (url, rows)
+    }
+
+    private func chooseImage(for key: String) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.prompt = "Use"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        model.setIcon(path: url.path, for: key)
     }
 }
 
@@ -1475,74 +1684,14 @@ struct KeyChip: View {
     }
 }
 
-struct IconsTab: View {
-    @ObservedObject var model: SettingsModel
-    @State private var importFolder: URL?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top) {
-                Spacer()
-                Button("Use icons from a folder…") { chooseFolder() }
-            }
-            List(model.iconRows()) { row in
-                let custom = row.customPath.flatMap { NSImage(contentsOfFile: ($0 as NSString).expandingTildeInPath) }
-                HStack {
-                    Image(nsImage: custom ?? row.appIcon).resizable().frame(width: 28, height: 28)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(row.label)
-                        if let path = row.customPath {
-                            Text(path).font(.caption).foregroundStyle(custom == nil ? .red : .secondary)
-                            if custom == nil {
-                                Text("Can't load this image").font(.caption).foregroundStyle(.red)
-                            }
-                        } else {
-                            Text("Default").font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                    Spacer()
-                    Button("Choose image…") { chooseImage(for: row.key) }
-                    if row.customPath != nil {
-                        Button("Remove") { model.setIcon(path: nil, for: row.key) }
-                    }
-                }
-            }
-        }
-        .sheet(isPresented: Binding(get: { importFolder != nil }, set: { if !$0 { importFolder = nil } })) {
-            if let importFolder {
-                IconFolderImportView(model: model, folder: importFolder) { self.importFolder = nil }
-            }
-        }
-    }
-
-    // The folder import: pick a folder, then a sheet shows which image
-    // goes to which app before anything is saved.
-    private func chooseFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Choose"
-        panel.message = "Images named after apps, like calendar.png"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        importFolder = url
-    }
-
-    private func chooseImage(for key: String) {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.image]
-        panel.prompt = "Use"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        model.setIcon(path: url.path, for: key)
-    }
-}
-
 // The "Use icons from a folder…" sheet. Lists every app an image was
 // matched to, each with a tick (all ticked to start with), and the images
 // that didn't match any app. Only "Use" saves anything, all in one change.
 struct IconFolderImportView: View {
     @ObservedObject var model: SettingsModel
     let folder: URL
+    // Only these apps (one workspace's), nil = every app.
+    var rows: [SettingsModel.IconRow]? = nil
     let close: () -> Void
     @State private var matches: [SettingsModel.IconFolderMatch] = []
     @State private var unmatched: [String] = []
@@ -1597,7 +1746,7 @@ struct IconFolderImportView: View {
         .padding(16)
         .frame(width: 520, height: 480)
         .onAppear {
-            let result = model.matchIcons(inFolder: folder)
+            let result = model.matchIcons(inFolder: folder, rows: rows)
             matches = result.matches
             unmatched = result.unmatched
             chosen = Set(result.matches.map { $0.id })
@@ -1637,6 +1786,8 @@ struct IconFolderImportView: View {
 // the chip look in AppRuleChip and WindowManagerKeyChip below.
 struct WorkspacesTab: View {
     @ObservedObject var model: SettingsModel
+    // The card something is being dragged over, lit up.
+    @State private var dropTarget: String?
 
     var body: some View {
         // Looked up on each redraw (two "does this file exist" checks, cheap),
@@ -1680,6 +1831,15 @@ struct WorkspacesTab: View {
         let rules = model.windowManagerRules.enumerated().filter { $0.element.workspace == workspace.name }
         let otherNames = model.windowManagerWorkspaceNames.filter { $0 != workspace.name }
         return HStack(alignment: .top, spacing: 10) {
+            // Drag this handle onto another card to change the order.
+            Image(systemName: "line.3.horizontal")
+                .foregroundStyle(.tertiary)
+                .frame(width: 14, height: 22)
+                .contentShape(Rectangle())
+                .help("Drag to reorder")
+                .draggable("workspace:\(index)") {
+                    Text(workspace.name).padding(6).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
+                }
             CommitTextField(label: "Workspace name", value: workspace.name, required: true, showsLabel: false,
                             problem: { model.renameProblem($0, at: index) },
                             onRefused: { model.notice = $0 }) {
@@ -1695,33 +1855,34 @@ struct WorkspacesTab: View {
                                 onRemove: { model.removeWindowManagerRule(at: ruleIndex) },
                                 onMove: { model.setRuleField("workspace", to: $0, at: ruleIndex) },
                                 onEdit: { editMatchText(rule.app, at: ruleIndex) })
+                        // Drag an app onto another card to move it there.
+                        .draggable("rule:\(ruleIndex)") { AppChip(title: look.title, icon: look.icon) }
                 }
-                Button {
-                    chooseApp(for: workspace.name)
-                } label: {
-                    Label("App", systemImage: "plus").font(.callout)
-                }
-                .buttonStyle(.borderless)
-                .padding(.vertical, 3)
-                .help("Add an app")
+                AddAppButton { chooseApp(for: workspace.name) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            HStack(spacing: 2) {
-                iconButton("chevron.up", help: "Move up", label: "Move \(workspace.name) up", disabled: index == 0) {
-                    model.moveWindowManagerEntry("workspaces", at: index, by: -1)
-                }
-                iconButton("chevron.down", help: "Move down", label: "Move \(workspace.name) down", disabled: index >= count - 1) {
-                    model.moveWindowManagerEntry("workspaces", at: index, by: 1)
-                }
-                iconButton("trash", help: "Remove this workspace", label: "Remove \(workspace.name)", disabled: false) {
-                    model.removeWindowManagerWorkspace(at: index)
-                }
+            iconButton("trash", help: "Remove this workspace", label: "Remove \(workspace.name)", disabled: false) {
+                model.removeWindowManagerWorkspace(at: index)
             }
-            .padding(.top, 2)
+            .padding(.top, 3)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
+        .modifier(WorkspaceCardStyle(targeted: dropTarget == workspace.name))
+        // What can be dropped on a card: an app (moves it to this
+        // workspace) or another card's handle (takes this card's place).
+        .dropDestination(for: String.self) { items, _ in
+            guard let item = items.first else { return false }
+            if item.hasPrefix("rule:"), let ruleIndex = Int(item.dropFirst("rule:".count)) {
+                model.setRuleField("workspace", to: workspace.name, at: ruleIndex)
+                return true
+            }
+            if item.hasPrefix("workspace:"), let from = Int(item.dropFirst("workspace:".count)) {
+                model.moveWindowManagerWorkspace(from: from, to: index)
+                return true
+            }
+            return false
+        } isTargeted: { targeted in
+            if targeted { dropTarget = workspace.name } else if dropTarget == workspace.name { dropTarget = nil }
+        }
     }
 
     private func iconButton(_ symbol: String, help: String, label: String, disabled: Bool, action: @escaping () -> Void) -> some View {
@@ -1830,37 +1991,19 @@ struct AppRuleChip: View {
     let onEdit: () -> Void
 
     var body: some View {
-        HStack(spacing: 4) {
-            Image(nsImage: icon)
-                .resizable()
-                .frame(width: 16, height: 16)
-            Text(title)
-                .lineLimit(1)
-            Button(action: onRemove) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.borderless)
-            .help("Remove \(title)")
-            .accessibilityLabel("Remove \(title)")
-        }
-        .padding(.leading, 6)
-        .padding(.trailing, 7)
-        .padding(.vertical, 3)
-        .background(Capsule().fill(Color.primary.opacity(0.09)))
-        .help("Right-click to move")
-        .contextMenu {
-            Menu("Move to") {
-                ForEach(otherWorkspaces, id: \.self) { name in
-                    Button(name) { onMove(name) }
+        AppChip(title: title, icon: icon, onRemove: onRemove)
+            .help("Drag to another workspace, or right-click")
+            .contextMenu {
+                Menu("Move to") {
+                    ForEach(otherWorkspaces, id: \.self) { name in
+                        Button(name) { onMove(name) }
+                    }
                 }
+                .disabled(otherWorkspaces.isEmpty)
+                Button("Edit Match Text…", action: onEdit)
+                Divider()
+                Button("Remove", action: onRemove)
             }
-            .disabled(otherWorkspaces.isEmpty)
-            Button("Edit Match Text…", action: onEdit)
-            Divider()
-            Button("Remove", action: onRemove)
-        }
     }
 }
 

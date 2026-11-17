@@ -492,7 +492,7 @@ func resolveLauncherApps(from config: SwitcherConfig, report: ConfigReport) -> [
             switch entry.newWindowStyle?.lowercased() {
             case "finder": script = finderNewWindowScript
             case "terminal": script = terminalNewWindowScript
-            case .some(let other):
+            case .some:
                 report.warning("\(entry.name) in \(workspace): newWindowStyle must be \"finder\" or \"terminal\".")
                 script = nil
             case nil:
