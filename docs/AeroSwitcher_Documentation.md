@@ -32,7 +32,7 @@ The app's code lives in `Sources/AeroSwitcher/`, one file per part of the app:
 | `HotkeyInterception.swift` | Catching Cmd+Tab and the window manager's Option keys before macOS sees them |
 | `MenuBar.swift` | The menu bar icon: workspace name, and its menu |
 | `SettingsWindow.swift` | The settings window (General, Launcher tiles, Keys, Icons, Workspaces) |
-| `SetupHelp.swift` | The setup checks (window manager, Cmd+Tab/Accessibility, Screen Recording) and the Setup window |
+| `SetupHelp.swift` | The setup checks (window manager, Cmd+Tab/Accessibility, Screen Recording) and the Permissions window |
 
 They all build into one app together, so code in one file can use things from another without any extra setup. There's no separate UI framework project, no storyboard, just:
 
@@ -92,7 +92,7 @@ Before 1.0 the tracker ran next to AeroSpace for 9 days (2026-11-05 to 2026-11-1
 - Quitting AeroSwitcher (menu, `pkill`, Ctrl+C) moves every parked window back first (log: `WorkspaceManager: quitting, moved N of M parked windows back on screen`).
 - After a crash or `kill -9`, the next start reads the file and the windows keep their workspaces and their places.
 - Menu > **Bring Back All Windows** moves every window into the workspace you are in and on screen, including any left in the corner by something else.
-- It pauses (and puts every window back on screen) whenever AeroSpace is running (two window managers would fight), Accessibility is off, the window list is switched off, or there are no workspaces. The menu bar shows a warning symbol and the reason, the Setup window says what to do (with a Quit AeroSpace button when that's the reason), and the Option keys go through untouched while paused.
+- It pauses (and puts every window back on screen) whenever AeroSpace is running (two window managers would fight), Accessibility is off, the window list is switched off, or there are no workspaces. The menu bar shows a warning symbol and the reason, the Permissions window says what to do (with a Quit AeroSpace button when that's the reason), and the Option keys go through untouched while paused.
 
 **Log lines** start with `WorkspaceManager:` (`Core -> School, 3 shown, 2 parked`, `new windows: ...`, `paused: ...`). Window titles are never logged.
 
@@ -247,16 +247,16 @@ What the bar shows:
 - The focused workspace name, in a monospaced font so the icon doesn't change width much.
 - A warning triangle while the window manager is paused (hover for the reason; the menu says it too).
 
-The menu, top to bottom:
-- **Workspaces**: every workspace, with the apps open in it in grey. A tick marks the one you're in. Click one to switch to it.
-- **Window manager paused: <reason>**, only while paused.
-- **Bring Back All Windows**: every window comes back on screen, in the workspace you're in. The rescue for a window that went missing.
-- **Reload config**: reads config.json again, exactly like `pkill -HUP AeroSwitcher` (see **Reloading**).
-- **Settings...**: opens the settings window (see **Settings window**, below). Hold Option while the menu is open and it turns into **Open config.json**, which opens the file itself.
-- **Permissions**: a tick or a cross for the window manager, Accessibility and Screen Recording, from the same check as the Setup window. Clicking a cross opens the right page in System Settings (or the Setup window). **Setup...** at the bottom opens the Setup window.
-- **Open at Login**: see **Packaging it as your daily-use app**, below.
-- **About AeroSwitcher**: the standard macOS About panel with the version and build number, the commit, the AeroSpace credit, a link to the source code and the MIT license, and the copyright line.
-- **Quit AeroSwitcher**. Every hidden window is moved back on screen first.
+The menu, top to bottom (each item has a small symbol, like the system menus in macOS 26):
+- **Workspaces**: every workspace, with the apps open in it in grey and its Option key on the right. A tick marks the one you're in. Click one to switch to it. Switch the list off in **Settings > General > Show workspaces in the menu** (`showWorkspacesInMenu` in config.json, on by default).
+- **Paused: <reason>**, only while paused.
+- **Bring Back All Windows**: every window comes back on screen, in the workspace you're in.
+- **Reload Config**: reads config.json again, exactly like `pkill -HUP AeroSwitcher`.
+- **Settings…** (Cmd+,). Hold Option while the menu is open and it turns into **Open config.json**.
+- **Permissions…**: opens the Permissions window. Its symbol turns into a warning while something there is missing.
+- **About AeroSwitcher**, **Quit AeroSwitcher** (Cmd+Q). Every hidden window is moved back on screen before quitting.
+
+**Open at Login** is in **Settings > General**.
 
 **How the name stays up to date.** The window manager calls the menu bar the moment the workspace changes (`onWorkspaceChanged`), and a cheap check every 5 seconds keeps the warning triangle honest, since pausing can happen without an event (a permission switched off, AeroSpace started). The menu is rebuilt from the window manager's memory each time it opens, so it never waits for anything.
 
@@ -268,11 +268,11 @@ While another app has a password field focused (or Terminal's Secure Keyboard En
 
 How: `SecureInputIndicator` in `Views.swift` checks `IsSecureEventInputEnabled()` once a second (macOS sends no notification) and reads which process turned it on from the session info (`kCGSSessionSecureInputPID`, no permission needed). Log: `Secure input: on (<app>)` and `Secure input: off`. Only shown while the Cmd+Tab hook runs.
 
-## Setup window
+## Permissions window
 
-![The Setup window](images/setup.png)
+![The Permissions window](images/setup.png)
 
-A small window that says what AeroSwitcher is missing, in plain words, with a button that goes to the right place. **Setup...** in the menu (under Permissions) and **Open Setup** on the Settings window's General tab open it any time.
+A small window laid out like a System Settings page: one row each for the window manager, Accessibility and Screen Recording, with a tick or a cross on the right and a button that goes to the right place. **Permissions…** in the menu and **Check Permissions…** in Settings > General open it any time. The window is as tall as its rows need.
 
 It opens by itself:
 - On a first launch (when `config.json` didn't exist yet and was just created), with a short welcome that says where the menu is.
@@ -436,7 +436,7 @@ Messages you can get from a click:
 
 Not interrupted, only logged: a window that closed a moment before you picked it, a failed workspace switch, the recent-order history that couldn't be saved. A config.json that can't be watched for changes (so saving it won't reload by itself) is added to the config problems window. Every alert says where the log is.
 
-Cmd+Tab when Screen Recording is off has no message of its own: the Setup window opens at launch for it (unless you ticked **Don't show at launch**) and the menu says **Permissions (needs attention)**. What the panel shows without Screen Recording was not tested.
+Cmd+Tab when Screen Recording is off has no message of its own: the Permissions window opens at launch for it (unless you ticked **Don't show at launch**) and the menu says **Permissions (needs attention)**. What the panel shows without Screen Recording was not tested.
 
 ## Log file
 
@@ -479,7 +479,7 @@ Built without git (for example from a ZIP download), the build still works and s
 
 ## Permissions this app needs
 
-- **Accessibility**: required for the Cmd+Tab and Option key interception (`CGEventTap`, an active tap that swallows the keys) and for managing windows. Input Monitoring is the neighbouring permission, see the Setup window notes above.
+- **Accessibility**: required for the Cmd+Tab and Option key interception (`CGEventTap`, an active tap that swallows the keys) and for managing windows. Input Monitoring is the neighbouring permission, see the Permissions window notes above.
 - **Screen Recording**: required for `ScreenCaptureKit` to take window screenshots.
 
 Both are granted per-app in System Settings > Privacy & Security, to AeroSwitcher.app specifically. If thumbnails stop appearing or Cmd+Tab stops responding after a rebuild, check that AeroSwitcher is still listed and enabled under both. The menu bar menu's **Permissions** item and the **Setup window** show both at a glance.
@@ -493,5 +493,5 @@ A few things worth doing once, when you're ready to stop rebuilding and just lea
 1. **Move the built `.app` to `/Applications`.** It'll run from anywhere, but `/Applications` is the standard, expected location, and it's where Login Items and Spotlight expect to find things.
 2. **Check the permissions on that final copy.** `build.sh` signs with your own certificate (`AeroSwitcherCodeSign`, see the installation guide; without it, it signs ad hoc and says so, and then the permissions reset on every rebuild; `SIGN_IDENTITY="name" ./build.sh` picks another certificate, and `SIGN_IDENTITY=-` forces ad hoc), and macOS ties Input Monitoring and Screen Recording to the app's name plus that certificate, not to the exact file. So rebuilding or moving the app keeps the permissions, as long as you keep using the same certificate. Do one full test after moving it anyway (open the switcher, confirm thumbnails and Cmd+Tab both work) before you rely on it daily.
 3. **Start it at login.** Open AeroSwitcher from `/Applications`, then tick **Open at Login** in its menu bar menu (or in the settings window). This uses Apple's own login item API (`SMAppService`) and shows up in System Settings > General > Login Items & Extensions. It refuses to change this from a copy outside an Applications folder, in either direction: macOS remembers the path, so a login item pointing at a build folder would break, and a test build turning it off would remove the installed app's login item (they count as the same app). Adding it by hand there (click "+" under "Open at Login") also still works, and macOS treats that hand-made entry as the same login item: the menu shows it ticked. Either way, no separate LaunchAgent is needed. If AeroSwitcher somehow gets started twice at login, the second copy quits by itself.
-4. **Rebuilding is safe, with one rule.** A rebuild changes the file but not the signing rule, so the permissions survive. The rule is that the certificate must stay the same. If it's deleted or you make a new one with another name, every rebuild counts as a new app and macOS asks for both permissions again. After any rebuild, check the Setup window once.
+4. **Rebuilding is safe, with one rule.** A rebuild changes the file but not the signing rule, so the permissions survive. The rule is that the certificate must stay the same. If it's deleted or you make a new one with another name, every rebuild counts as a new app and macOS asks for both permissions again. After any rebuild, check the Permissions window once.
 5. **Optional sanity check**: log out and back in once (or restart) after setting up Login Items, just to confirm it actually launches on its own before you stop thinking about it.

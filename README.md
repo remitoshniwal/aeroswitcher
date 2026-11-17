@@ -48,7 +48,7 @@ It used to be a companion app for the [AeroSpace](https://github.com/nikitabobko
 - **Accessibility**, so it can catch Cmd+Tab and the Option keys, and move windows
 - **Screen Recording**, for the window thumbnails
 
-AeroSwitcher opens a Setup window that shows what's missing, with a button for each. Quit and reopen AeroSwitcher after granting them (Setup has a Restart button).
+AeroSwitcher opens a Permissions window that shows what's missing, with a button for each. Quit and reopen AeroSwitcher after granting them (the Permissions window has a Restart button).
 
 **4. Try it.** You start with four workspaces, Main, Work, Personal and Extra, on **Option+1** to **Option+4**. The menu bar shows the one you're in. Rename them, add more and set up app rules in **Settings > Workspaces**.
 
@@ -96,9 +96,9 @@ Changes from the settings window apply at once, and hand edits as soon as you sa
 ## If something doesn't work
 
 - **A window is missing:** menu bar menu > **Bring Back All Windows** puts every window on screen in the workspace you're in.
-- **The menu bar shows a warning triangle:** the window manager is paused. The menu says why (no Accessibility permission, no workspaces, AeroSpace running), and so does the Setup window.
+- **The menu bar shows a warning triangle:** the window manager is paused. The menu says why (no Accessibility permission, no workspaces, AeroSpace running), and so does the Permissions window.
 - **A lock in the bottom left corner:** an app has a password field open, and macOS blocks shortcuts until it closes. Hover over the lock to see which app.
-- **Cmd+Tab still opens the normal macOS switcher:** Accessibility is missing. Open the Setup window (menu bar menu, **Permissions**).
+- **Cmd+Tab still opens the normal macOS switcher:** Accessibility is missing. Open **Permissions…** in the menu bar menu.
 - **The panel opens but the cards are blank:** Screen Recording is missing. Same window. Screen Recording sometimes only works after AeroSwitcher is restarted, and Setup has a button for that.
 - **Cmd+Tab does nothing at all and the log says "did not answer":** macOS's screenshot service is stuck, not AeroSwitcher. It can happen after another user was logged in on the Mac. Log out any other accounts, and if that doesn't help, restart the Mac.
 - **A grey tile doesn't open its app:** the tile's **Open name** in **Settings > Launcher tiles** has to be the app's name as macOS knows it. The alert that appears says what macOS answered. If the tile seems to do nothing and no alert appears (Roblox Studio does this), use the full path instead, for example `/Applications/RobloxStudio.app`.
@@ -165,7 +165,7 @@ aeroswitcher/
 │   ├── HotkeyInterception.swift     Catching Cmd+Tab and the Option keys before macOS does
 │   ├── MenuBar.swift                The menu bar icon and its menu
 │   ├── SettingsWindow.swift         The settings window
-│   └── SetupHelp.swift              Setup checks and the Setup window
+│   └── SetupHelp.swift              Setup checks and the Permissions window
 └── docs/
     ├── AeroSwitcher_Documentation.md      How everything works, config reference
     └── AeroSwitcher_Installation_Guide.md Full setup, step by step

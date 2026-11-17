@@ -54,16 +54,16 @@ An app you built yourself opens without the Open Anyway step from part A, becaus
 
 **C1. If you used AeroSpace before:** quit AeroSpace and remove it from **System Settings > General > Login Items**. Two window managers at once would fight over every window, so AeroSwitcher pauses while AeroSpace runs (the menu bar then shows a warning triangle). On its first launch AeroSwitcher copies your workspaces, their keys and your app rules from `~/.aerospace.toml`. It only reads that file and never changes it.
 
-**C2. Grant two permissions.** AeroSwitcher opens its **Setup** window and shows what's missing, with a button for each. Both are in **System Settings > Privacy & Security**:
+**C2. Grant two permissions.** AeroSwitcher opens its **Permissions** window and shows what's missing, with a button for each. Both are in **System Settings > Privacy & Security**:
 
 - **Accessibility**, so it can catch Cmd+Tab and the Option keys before macOS does, and move other apps' windows. Without it the window manager stays paused and Cmd+Tab opens the normal macOS switcher.
 - **Screen Recording**, for the window pictures in the switcher. Without it the cards are blank.
 
-If AeroSwitcher isn't in a list yet, click the **+** under the list, choose AeroSwitcher in Applications and switch it on. If it is in the list but still marked in Setup, select it, remove it with **-**, and add it again with **+**. Then click **Restart AeroSwitcher** in the Setup window; Screen Recording in particular often needs a restart.
+If AeroSwitcher isn't in a list yet, click the **+** under the list, choose AeroSwitcher in Applications and switch it on. If it is in the list but still marked in Setup, select it, remove it with **-**, and add it again with **+**. Then click **Restart AeroSwitcher** in the Permissions window; Screen Recording in particular often needs a restart.
 
-![The Setup window with every check ticked](images/setup.png)
+![The Permissions window with every check ticked](images/setup.png)
 
-The ticks update by themselves. Setup is always in the menu bar menu under **Permissions > Setup...**.
+The ticks update by themselves. It is always in the menu bar menu under **Permissions…**.
 
 **C3. Try it.** You start with four workspaces: **Main**, **Work**, **Personal** and **Extra**, on **Option+1** to **Option+4** (or your AeroSpace ones). The menu bar shows the one you're in, and every window that was open is in it.
 
@@ -83,7 +83,7 @@ It runs with no Dock icon, only the workspace name in the menu bar.
 
 ## Updating
 
-Quit AeroSwitcher from its menu (every hidden window comes back on screen first), replace the app in Applications with the new one, and open it again. Your settings are kept in `~/Library/Application Support/AeroSwitcher/`. A downloaded update may need the Open Anyway step again, and macOS may ask for the two permissions again; the Setup window shows it if so.
+Quit AeroSwitcher from its menu (every hidden window comes back on screen first), replace the app in Applications with the new one, and open it again. Your settings are kept in `~/Library/Application Support/AeroSwitcher/`. A downloaded update may need the Open Anyway step again, and macOS may ask for the two permissions again; the Permissions window shows it if so.
 
 ## Removing it
 
@@ -94,7 +94,7 @@ Quit AeroSwitcher from its menu so every window comes back on screen, then move 
 AeroSwitcher keeps a log of what it did and what failed: **Settings... > General > Show log**, or `~/Library/Logs/AeroSwitcher/AeroSwitcher.log`. The first lines say which version it is. Read through it before sharing it, it contains file paths.
 
 - **A window is missing** → menu bar menu > **Bring Back All Windows**. Every window comes back on screen, in the workspace you're in.
-- **Warning triangle in the menu bar** → the window manager is paused. The menu and the Setup window say why: no Accessibility permission, no workspaces, or AeroSpace running.
+- **Warning triangle in the menu bar** → the window manager is paused. The menu and the Permissions window say why: no Accessibility permission, no workspaces, or AeroSpace running.
 - **Cmd+Tab opens the normal macOS switcher** → Accessibility isn't switched on for AeroSwitcher (look at Input Monitoring too).
 - **The switcher opens but the cards are blank** → Screen Recording isn't switched on, or needs a restart of AeroSwitcher.
 - **Permissions are asked for again after every rebuild** → `build.sh` printed that it signed ad hoc: the certificate from step B2 is missing or has another name.
