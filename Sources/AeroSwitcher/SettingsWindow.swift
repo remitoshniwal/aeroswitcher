@@ -994,7 +994,7 @@ struct GeneralTab: View {
                     set: { model.setTopLevelBool("autoReloadConfig", $0) }))
             }
             Section("AeroSwitcher") {
-                Toggle("Launch at login", isOn: Binding(
+                Toggle("Open at Login", isOn: Binding(
                     get: { model.launchAtLogin },
                     set: { _ in model.toggleLaunchAtLogin() }))
             }
@@ -1082,7 +1082,7 @@ struct WorkspaceTilesView: View {
                 }
             }
             HStack {
-                Button("Add App...") { picking = true }
+                Button("Add App…") { picking = true }
                 Spacer()
             }
         }
@@ -1280,10 +1280,10 @@ struct AppPickerView: View {
                     .disabled(alreadyAdded)
                 }
             } else {
-                ProgressView("Looking for apps...").frame(maxWidth: .infinity, maxHeight: .infinity)
+                ProgressView("Looking for apps…").frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             HStack {
-                Button("Other...") { chooseOther() }
+                Button("Other…") { chooseOther() }
                 Spacer()
                 Button("Cancel") { isPresented = false }.keyboardShortcut(.cancelAction)
             }
@@ -1334,7 +1334,7 @@ struct KeysTab: View {
                         }
                         Spacer()
                         if model.recordingAction == name {
-                            Text("Press a key...").foregroundStyle(Color.accentColor)
+                            Text("Press a key…").foregroundStyle(Color.accentColor)
                             Button("Cancel") { model.stopRecording() }
                         } else {
                             Text(keyDisplayName(model.currentKey(for: name)))
@@ -1385,7 +1385,7 @@ struct IconsTab: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top) {
                 Spacer()
-                Button("Use icons from a folder...") { chooseFolder() }
+                Button("Use icons from a folder…") { chooseFolder() }
             }
             List(model.iconRows()) { row in
                 let custom = row.customPath.flatMap { NSImage(contentsOfFile: ($0 as NSString).expandingTildeInPath) }
@@ -1403,7 +1403,7 @@ struct IconsTab: View {
                         }
                     }
                     Spacer()
-                    Button("Choose image...") { chooseImage(for: row.key) }
+                    Button("Choose image…") { chooseImage(for: row.key) }
                     if row.customPath != nil {
                         Button("Remove") { model.setIcon(path: nil, for: row.key) }
                     }
@@ -1439,7 +1439,7 @@ struct IconsTab: View {
     }
 }
 
-// The "Use icons from a folder..." sheet. Lists every app an image was
+// The "Use icons from a folder…" sheet. Lists every app an image was
 // matched to, each with a tick (all ticked to start with), and the images
 // that didn't match any app. Only "Use" saves anything, all in one change.
 struct IconFolderImportView: View {
@@ -1684,7 +1684,7 @@ struct WorkspacesTab: View {
     }
 
     private var importButton: some View {
-        Button("Import from AeroSpace...") { model.importFromAeroSpace() }
+        Button("Import from AeroSpace…") { model.importFromAeroSpace() }
     }
 
     // MARK: Asking for an app or a text
@@ -1759,7 +1759,7 @@ struct AppRuleChip: View {
                 }
             }
             .disabled(otherWorkspaces.isEmpty)
-            Button("Edit Match Text...", action: onEdit)
+            Button("Edit Match Text…", action: onEdit)
             Divider()
             Button("Remove", action: onRemove)
         }

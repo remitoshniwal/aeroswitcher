@@ -52,7 +52,7 @@ AeroSwitcher opens a Setup window that shows what's missing, with a button for e
 
 **4. Try it.** You start with four workspaces, Main, Work, Personal and Extra, on **Option+1** to **Option+4**. The menu bar shows the one you're in. Rename them, add more and set up app rules in **Settings > Workspaces**.
 
-**5. Optional: start it at login.** Tick **Launch at login** in its menu bar menu.
+**5. Optional: start it at login.** Turn on **Open at Login** in its menu bar menu.
 
 Coming from AeroSpace? Quit AeroSpace and remove it from **System Settings > General > Login Items** first. On its first launch AeroSwitcher copies your workspaces, their keys and your app rules from `~/.aerospace.toml` (it only reads that file, never changes it).
 

@@ -105,7 +105,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         button.image = nil
         button.imagePosition = .noImage
         button.font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-        button.title = name ?? "..."
+        button.title = name ?? "…"
         button.toolTip = nil
     }
 
@@ -190,7 +190,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         // Holding Option while the menu is open swaps it for "Open
         // config.json" (a standard macOS menu trick: an "alternate" item
         // with the same key and Option added).
-        let settingsItem = item("Settings...", #selector(settingsClicked))
+        let settingsItem = item("Settings…", #selector(settingsClicked))
         settingsItem.keyEquivalent = ","
         settingsItem.keyEquivalentModifierMask = [.command]
         menu.addItem(settingsItem)
@@ -200,7 +200,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         openConfig.isAlternate = true
         menu.addItem(openConfig)
         menu.addItem(permissionsItem())
-        let login = item("Launch at login", #selector(launchAtLoginClicked))
+        let login = item("Open at Login", #selector(launchAtLoginClicked))
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(login)
         menu.addItem(item("About AeroSwitcher", #selector(aboutClicked)))
@@ -239,7 +239,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         guard let status = SetupHelp.shared.statusForMenu() else {
             let parent = NSMenuItem(title: "Permissions", action: nil, keyEquivalent: "")
             let submenu = NSMenu()
-            let checking = NSMenuItem(title: "Checking...", action: nil, keyEquivalent: "")
+            let checking = NSMenuItem(title: "Checking…", action: nil, keyEquivalent: "")
             checking.isEnabled = false
             submenu.addItem(checking)
             parent.submenu = submenu
@@ -247,7 +247,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         }
         let allGood = status.requiredMissing.isEmpty && !status.hasWarnings
 
-        let parent = NSMenuItem(title: allGood ? "Permissions" : "Permissions (needs attention)", action: nil, keyEquivalent: "")
+        let parent = NSMenuItem(title: allGood ? "Permissions" : "Permissions ⚠︎", action: nil, keyEquivalent: "")
         let submenu = NSMenu()
         submenu.autoenablesItems = false
         // mark: "✓" fine, "✗" missing, "!" optional or unclear. A row with a
@@ -269,7 +269,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         row("Screen Recording", mark: status.screenRecording ? "✓" : "✗",
             url: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
         submenu.addItem(.separator())
-        submenu.addItem(item("Setup...", #selector(setupHelpClicked)))
+        submenu.addItem(item("Setup…", #selector(setupHelpClicked)))
         parent.submenu = submenu
         return parent
     }

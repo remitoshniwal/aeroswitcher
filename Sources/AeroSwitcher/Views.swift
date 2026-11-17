@@ -2,6 +2,58 @@ import Cocoa
 import SwiftUI
 import Carbon
 
+// MARK: - Shared look
+//
+// One place for the panel look, so the switcher and the overview always
+// match. Change the numbers here to restyle both: corner sizes, the
+// selection ring, the glass edge.
+enum PanelStyle {
+    static let panelRadius: CGFloat = 26       // the whole panel
+    static let cardRadius: CGFloat = 12        // window pictures and launcher tiles
+    static let sectionRadius: CGFloat = 16     // workspace cards in the overview
+    static let ringWidth: CGFloat = 2.5        // selection ring
+    static let ring = Color.white              // selection ring color
+    static let cardFill = Color(white: 0.11)   // behind a picture, and empty tiles
+    static let label = Color.white.opacity(0.72)
+    static let labelSelected = Color.white
+    static let selectionAnimation = Animation.easeOut(duration: 0.12)
+}
+
+// The glass the panels sit on: macOS's blur, a little darker, with a
+// fine edge that is brighter at the top, like light catching glass.
+struct PanelBackground: ViewModifier {
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: PanelStyle.panelRadius, style: .continuous)
+        content
+            .background(.regularMaterial)
+            .background(Color.black.opacity(0.18))
+            .clipShape(shape)
+            .overlay(
+                shape.strokeBorder(
+                    LinearGradient(colors: [Color.white.opacity(0.24), Color.white.opacity(0.06)],
+                                   startPoint: .top, endPoint: .bottom),
+                    lineWidth: 1)
+            )
+    }
+}
+
+// Page dots: the current page is a short pill, the others small dots.
+struct PageDots: View {
+    let pageIndex: Int
+    let totalPages: Int
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(0..<totalPages, id: \.self) { i in
+                Capsule()
+                    .fill(Color.white.opacity(i == pageIndex ? 0.9 : 0.28))
+                    .frame(width: i == pageIndex ? 16 : 6, height: 6)
+            }
+        }
+        .animation(PanelStyle.selectionAnimation, value: pageIndex)
+    }
+}
+
 // MARK: - SwiftUI view
 
 // Purely presentational: it just draws whatever rows it's handed for the
@@ -43,7 +95,8 @@ struct SwitcherView: View {
                     // for no reason.
                     if !visibleRealRows.isEmpty {
                         Rectangle()
-                            .fill(Color.white.opacity(0.12))
+                            .fill(LinearGradient(colors: [.clear, Color.white.opacity(0.14), .clear],
+                                                 startPoint: .leading, endPoint: .trailing))
                             .frame(width: referenceWidth, height: 1)
                     }
 
@@ -63,24 +116,13 @@ struct SwitcherView: View {
                 // there's more than one — most of the time this never
                 // appears at all.
                 if totalPages > 1 {
-                    HStack(spacing: 6) {
-                        ForEach(0..<totalPages, id: \.self) { i in
-                            Circle()
-                                .fill(i == pageIndex ? Color.white.opacity(0.9) : Color.white.opacity(0.3))
-                                .frame(width: 6, height: 6)
-                        }
-                    }
+                    PageDots(pageIndex: pageIndex, totalPages: totalPages)
                 }
             }
             .padding(24)
         }
         .frame(width: maxWidth, height: panelHeight)
-        .background(.ultraThinMaterial)                       // native frosted-glass blur, like the real Cmd+Tab
-        .clipShape(RoundedRectangle(cornerRadius: 20))         // rounds the WHOLE panel, not just the cards
-        .overlay(
-            RoundedRectangle(cornerRadius: 20)
-                .stroke(Color.white.opacity(0.15), lineWidth: 1)  // faint edge so it doesn't disappear on light backgrounds
-        )
+        .modifier(PanelBackground())
     }
 }
 
@@ -90,20 +132,27 @@ private struct ThumbnailCard: View {
     let onTap: () -> Void
 
     var body: some View {
+        let shape = RoundedRectangle(cornerRadius: PanelStyle.cardRadius, style: .continuous)
         VStack {
             Image(nsImage: item.image)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(width: cardSize.width, height: cardSize.height)
-                .background(Color(white: 0.15))
-                .cornerRadius(8)
+                .background(PanelStyle.cardFill)
+                .clipShape(shape)
+                // A hairline on every card so pictures with dark edges
+                // still read as cards; the ring replaces it when selected.
+                .overlay(shape.strokeBorder(Color.white.opacity(0.07), lineWidth: 1))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 3)
+                    shape.stroke(PanelStyle.ring, lineWidth: PanelStyle.ringWidth)
+                        .shadow(color: PanelStyle.ring.opacity(0.35), radius: 6)
+                        .padding(-3)
+                        .opacity(isSelected ? 1 : 0)
                 )
+                .animation(PanelStyle.selectionAnimation, value: isSelected)
             Text(item.appName)
-                .foregroundColor(.white)
-                .font(.system(size: 13))
+                .foregroundColor(isSelected ? PanelStyle.labelSelected : PanelStyle.label)
+                .font(.system(size: 13, weight: .medium))
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(width: cardSize.width)  // never let a long title stretch the column
@@ -153,8 +202,8 @@ private struct LauncherCard: View {
 
     var body: some View {
         VStack {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color(white: 0.15))
+            RoundedRectangle(cornerRadius: PanelStyle.cardRadius, style: .continuous)
+                .fill(PanelStyle.cardFill)
                 .frame(width: cardSize.width, height: cardSize.height)
                 // Applied here, BEFORE the icon's .overlay() below, on
                 // purpose — SwiftUI's .opacity() only affects the view
@@ -219,13 +268,18 @@ private struct LauncherCard: View {
                     }
                 }
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 3)
-                        .opacity(dim)
+                    // The ring is NOT dimmed like the rest of the tile, so
+                    // the selection is as easy to see here as on a window.
+                    RoundedRectangle(cornerRadius: PanelStyle.cardRadius, style: .continuous)
+                        .stroke(PanelStyle.ring, lineWidth: PanelStyle.ringWidth)
+                        .shadow(color: PanelStyle.ring.opacity(0.35), radius: 6)
+                        .padding(-3)
+                        .opacity(isSelected ? 1 : 0)
                 )
+                .animation(PanelStyle.selectionAnimation, value: isSelected)
             Text(app.displayName)
-                .foregroundColor(.white.opacity(app.isOrphaned ? 0.5 : 0.35))
-                .font(.system(size: 13))
+                .foregroundColor(.white.opacity(isSelected ? 0.9 : (app.isOrphaned ? 0.5 : 0.35)))
+                .font(.system(size: 13, weight: .medium))
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(width: cardSize.width)
@@ -237,7 +291,8 @@ private struct LauncherCard: View {
             if shouldShowTileStatusText(appConfig) {
                 Text(app.isOrphaned ? "No window" : (isRunning ? "Running" : "Quit"))
                     .foregroundColor(.white.opacity(0.3))
-                    .font(.system(size: 10))
+                    .font(.system(size: 10, weight: .medium))
+                    .tracking(0.3)
                     .opacity(dim)
             }
         }
@@ -337,24 +392,13 @@ struct WorkspacesOverviewView: View {
             // Same page-dots convention as the normal switcher, only shown
             // once there's more than one page.
             if totalPages > 1 {
-                HStack(spacing: 6) {
-                    ForEach(0..<totalPages, id: \.self) { i in
-                        Circle()
-                            .fill(i == pageIndex ? Color.white.opacity(0.9) : Color.white.opacity(0.3))
-                            .frame(width: 6, height: 6)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .center)
+                PageDots(pageIndex: pageIndex, totalPages: totalPages)
+                    .frame(maxWidth: .infinity, alignment: .center)
             }
         }
         .padding(24)
         .frame(width: width, height: height, alignment: .topLeading)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 20))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20)
-                .stroke(Color.white.opacity(0.15), lineWidth: 1)
-        )
+        .modifier(PanelBackground())
     }
 
     // One workspace's card. Pulled out of body only so the normal path and
@@ -362,9 +406,11 @@ struct WorkspacesOverviewView: View {
     // copies of it that could slowly drift apart.
     private func workspaceCard(_ workspace: WorkspaceSummary) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(workspace.name)
-                .foregroundColor(.white.opacity(0.6))
-                .font(.system(size: 13, weight: .semibold))
+            Text(workspace.name.uppercased())
+                .foregroundColor(.white.opacity(0.5))
+                .font(.system(size: 11, weight: .semibold))
+                .tracking(1.2)
+                .frame(height: 16, alignment: .leading)
 
             // No "Nothing open" label — an empty card is just the
             // name and blank space below it, at the same height a
@@ -384,11 +430,11 @@ struct WorkspacesOverviewView: View {
         // text — makes it obvious at a glance where one workspace
         // ends and the next begins, especially once there are
         // several in a row.
-        .background(Color.white.opacity(0.05))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .background(Color.white.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: PanelStyle.sectionRadius, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            RoundedRectangle(cornerRadius: PanelStyle.sectionRadius, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
         )
     }
 }
@@ -667,18 +713,18 @@ private struct WorkspaceAppIcon: View {
                         .frame(width: iconSize, height: iconSize)
                 } else if app.windowCount > 1 {
                     Text("\(app.windowCount)")
-                        .foregroundColor(.white)
-                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.black)
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(Color.black.opacity(0.75))
+                        .background(Color.white.opacity(0.9))
                         .clipShape(Capsule())
                         .offset(x: 4, y: 4)
                 }
             }
             Text(app.appName)
-                .foregroundColor(.white.opacity(isWindowless ? 0.5 : 0.8))
-                .font(.system(size: 11))
+                .foregroundColor(.white.opacity(isWindowless ? 0.45 : 0.75))
+                .font(.system(size: 11, weight: .medium))
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(width: iconSize + 20)
@@ -892,6 +938,8 @@ final class SecureInputIndicator {
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
+        // Always dark, like the switcher, whatever the system setting.
+        panel.appearance = NSAppearance(named: .darkAqua)
         let view = SecureInputHoverView(iconSize: iconSize)
         view.onResize = { [weak self] expanded in self?.place(expanded: expanded) }
         panel.contentView = view
@@ -961,7 +1009,8 @@ final class SecureInputHoverView: NSView {
         background.state = .active
         background.blendingMode = .behindWindow
         background.wantsLayer = true
-        background.layer?.cornerRadius = 10
+        background.layer?.cornerRadius = 12
+        background.layer?.cornerCurve = .continuous
         background.layer?.masksToBounds = true
         background.autoresizingMask = [.width, .height]
         background.frame = bounds

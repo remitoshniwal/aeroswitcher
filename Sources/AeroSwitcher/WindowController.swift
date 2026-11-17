@@ -1135,6 +1135,10 @@ class SwitcherWindowController: NSObject {
         )
         win.isOpaque = false
         win.backgroundColor = .clear
+        // Always dark: the panel's white text is made for a dark glass,
+        // also when the Mac is in light mode.
+        win.appearance = NSAppearance(named: .darkAqua)
+        win.hasShadow = true
         win.level = .floating
         win.contentView = hosting
         self.window = win

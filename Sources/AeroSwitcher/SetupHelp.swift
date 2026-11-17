@@ -294,7 +294,7 @@ final class SetupHelp: NSObject, NSWindowDelegate, ObservableObject {
                 })
             }
             rows.append(SetupRow(id: "manager", mark: reason == "Starting" ? .idle : .bad, title: "Window manager",
-                detail: reason == "Starting" ? "Starting..." : "Paused: \(reason)",
+                detail: reason == "Starting" ? "Starting…" : "Paused: \(reason)",
                 hint: reason == "AeroSpace is running" ? "Also remove it from Login Items." : nil,
                 buttons: buttons))
         } else {
@@ -420,7 +420,7 @@ struct SetupView: View {
                     .onAppear { DispatchQueue.main.async { proxy.scrollTo("top", anchor: .top) } }
                 }
             } else {
-                Text("Checking...").foregroundStyle(.secondary).padding(24)
+                Text("Checking…").foregroundStyle(.secondary).padding(24)
                 Spacer()
             }
             Divider()
@@ -436,7 +436,7 @@ struct SetupView: View {
             : (help.welcome ? "Welcome to AeroSwitcher" : (warnings ? "Almost set" : "All set"))
         let subtitle = missing ? "" : (help.welcome ? "Find it in the menu bar." : "")
         return VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.title2).bold()
+            Text(title).font(.system(size: 22, weight: .semibold))
             if !subtitle.isEmpty { Text(subtitle).foregroundStyle(.secondary) }
         }
         .fixedSize(horizontal: false, vertical: true)
@@ -509,6 +509,6 @@ struct SetupRowView: View {
         .padding(.vertical, compact ? 8 : 12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.primary.opacity(0.04))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }

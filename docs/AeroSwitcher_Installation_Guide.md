@@ -77,7 +77,7 @@ The ticks update by themselves. Setup is always in the menu bar menu under **Per
 
 **C4. Make the workspaces yours.** Menu bar menu > **Settings... > Workspaces**: rename workspaces, add more, record their keys by clicking the key chip, and send apps to a workspace with **+ App**. Right-click an app to move it to another workspace. The other tabs set up grey launcher tiles, the keys inside the switcher and custom icons. Every change applies at once.
 
-**C5. Optional: start it at login.** Tick **Launch at login** in the menu bar menu (also in **Settings... > General**). Log out and back in once to check it starts by itself.
+**C5. Optional: start it at login.** Turn on **Open at Login** in the menu bar menu (also in **Settings... > General**). Log out and back in once to check it starts by itself.
 
 It runs with no Dock icon, only the workspace name in the menu bar.
 
