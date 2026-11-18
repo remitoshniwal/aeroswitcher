@@ -846,8 +846,13 @@ final class SettingsModel: ObservableObject {
     func iconRows(forWorkspace workspace: String) -> [IconRow] {
         guard let config else { return [] }
         var rows: [IconRow] = []
+        // The same app from a tile and a rule only once ("Roblox Studio"
+        // and "RobloxStudio" count as the same), compared without capitals,
+        // spaces or punctuation.
+        func simple(_ text: String) -> String { text.lowercased().filter { $0.isLetter || $0.isNumber } }
         func add(_ row: IconRow) {
-            if !rows.contains(where: { namesMatch($0.key, row.key) }) { rows.append(row) }
+            let mine = Set((row.names + [row.key, row.label]).map(simple))
+            if !rows.contains(where: { !mine.isDisjoint(with: ($0.names + [$0.key, $0.label]).map(simple)) }) { rows.append(row) }
         }
         let tiles = config.workspaces[workspace] ?? []
         for tile in tiles {
