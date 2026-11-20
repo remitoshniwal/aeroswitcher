@@ -90,6 +90,11 @@ struct SwitcherConfig: Codable {
     var showTileStatusText: Bool? = nil
     // The workspace list at the top of the menu bar menu. nil means on.
     var showWorkspacesInMenu: Bool? = nil
+    // The launcher tiles are the apps of each workspace (the rules in
+    // "windowManager"), so there is one list to keep instead of two. The
+    // hand-made tiles in "workspaces" stay in the file but are only used
+    // when this is false. nil means on. See tilesFromRules.
+    var tilesFromWorkspaces: Bool? = nil
     // Custom icons for apps that AREN'T necessarily in "workspaces" at
     // all — LauncherAppConfig's own "icon" field (above) only exists on
     // entries already inside some workspace's roster, so it can't help an
@@ -174,12 +179,16 @@ struct WindowManagerSettings {
     // several are, the one with the longest text. Two rules with the same
     // length: the one written first.
     func workspace(forBundlePath path: String) -> String? {
+        bestRule(forBundlePath: path)?.workspace
+    }
+
+    func bestRule(forBundlePath path: String) -> Rule? {
         let lowered = path.lowercased()
         var best: Rule?
         for rule in rules where lowered.contains(rule.appPathContains.lowercased()) {
             if rule.appPathContains.count > (best?.appPathContains.count ?? -1) { best = rule }
         }
-        return best?.workspace
+        return best
     }
 
     func workspace(forKeyCode keyCode: Int64) -> String? {
@@ -439,7 +448,7 @@ func describeDecodingError(_ error: Error) -> String {
 // the decode above already checked the values.
 func warnAboutUnknownKeys(in data: Data, report: ConfigReport) {
     guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
-    let topLevelKeys: Set = ["keybinds", "workspaces", "showTileStatusText", "showWorkspacesInMenu", "icons", "autoReloadConfig", "windowManager"]
+    let topLevelKeys: Set = ["keybinds", "workspaces", "tilesFromWorkspaces", "showTileStatusText", "showWorkspacesInMenu", "icons", "autoReloadConfig", "windowManager"]
     let keybindKeys: Set = ["cycleNext", "cyclePrevious", "enterGreyedRow", "exitGreyedRow", "pageUp", "pageDown", "confirm", "cancel", "second"]
     let appKeys: Set = ["name", "match", "open", "newWindowStyle", "icon"]
     for key in root.keys.sorted() where !topLevelKeys.contains(key) {
@@ -511,6 +520,110 @@ func resolveLauncherApps(from config: SwitcherConfig, report: ConfigReport) -> [
     return result
 }
 
+// MARK: Tiles made from the workspaces (tilesFromWorkspaces)
+//
+// With "tilesFromWorkspaces" on (the default), each workspace's grey tiles
+// are the apps its rules send there, in the same order as the Workspaces
+// tab shows them, so adding an app to a workspace also gives it a tile
+// there. Finder is the exception: unless a rule puts it somewhere, it gets
+// a tile in every workspace (a new Finder window opens in the workspace
+// you're in, it has no home of its own).
+//
+// A rule is only a piece of text ("Whatsapp.app", "Ableton Live"), so the
+// app is looked up: first the way `open -a` finds a name, then, for text
+// like "Ableton Live" that isn't a whole app name, every installed app
+// whose place on disk contains it (and that this rule really wins, so
+// "Roblox" doesn't pick RobloxStudio, which has its own rule). A rule that
+// finds no installed app gets no tile.
+//
+// An old hand-made tile for the same app (any workspace) still lends its
+// name, match text, Open text, new-window style and icon, so turning this
+// on doesn't rename anything ("Chrome" stays "Chrome").
+func tilesFromRules(_ windowManager: WindowManagerSettings, config: SwitcherConfig, report: ConfigReport) -> [String: [LauncherApp]] {
+    // The old tiles by the app they open, worked out once.
+    var oldTiles: [String: LauncherAppConfig] = [:]
+    for name in config.workspaces.keys.sorted() {
+        for entry in config.workspaces[name] ?? [] {
+            guard let path = tileAppPath(openName: entry.open), oldTiles[path] == nil else { continue }
+            oldTiles[path] = entry
+        }
+    }
+    var allPaths: [String]?   // the disk scan, only if a rule needs it
+    func findApp(_ rule: WindowManagerSettings.Rule) -> String? {
+        let text = rule.appPathContains
+        let lowered = text.lowercased()
+        func ruleWins(_ path: String) -> Bool {
+            path.lowercased().contains(lowered) && windowManager.bestRule(forBundlePath: path)?.appPathContains == text
+        }
+        if text.hasPrefix("/") {
+            return FileManager.default.fileExists(atPath: text) ? text : nil
+        }
+        let bare = lowered.hasSuffix(".app") ? String(text.dropLast(4)) : text
+        if let path = tileAppPath(openName: bare), ruleWins(path) { return path }
+        if allPaths == nil { allPaths = installedAppPaths() }
+        // Several apps: the shortest name ("Minecraft" over "Minecraft Updater").
+        return allPaths!.filter(ruleWins).min {
+            ($0 as NSString).lastPathComponent.count < ($1 as NSString).lastPathComponent.count
+        }
+    }
+    func tile(forAppAt path: String, workspace: String) -> LauncherApp {
+        let app = installedApp(at: path)
+        let old = oldTiles[path]
+        var style = old?.newWindowStyle?.lowercased()
+        if style == nil {
+            switch app.bundleID {
+            case "com.apple.finder": style = "finder"
+            case "com.apple.Terminal": style = "terminal"
+            default: break
+            }
+        }
+        let script = style == "finder" ? finderNewWindowScript : style == "terminal" ? terminalNewWindowScript : nil
+        let icon = old?.icon.flatMap {
+            loadCustomIcon(path: $0, context: "workspace \"\(workspace)\", app \"\(old!.name)\"", report: report)
+        }
+        // The name the app's windows go by: the running app's own name if
+        // it's open, else the name inside the app (VS Code's is "Code").
+        let runningName = NSWorkspace.shared.runningApplications
+            .first { $0.bundleURL?.standardizedFileURL.path == path }?.localizedName
+        return LauncherApp(displayName: old?.name ?? app.displayName,
+                           matchKey: old?.match ?? runningName ?? app.bundleName ?? app.fileName,
+                           openName: old?.open ?? path,
+                           newWindowScript: script, customIcon: icon, bundleID: app.bundleID)
+    }
+
+    let finderPath = "/System/Library/CoreServices/Finder.app"
+    var finderHasRule = false
+    var result: [String: [LauncherApp]] = [:]
+    var found: [String: String?] = [:]   // rule text -> app, each looked up once
+    for workspace in windowManager.workspaceNames {
+        var paths: [String] = []
+        for rule in windowManager.rules where rule.workspace == workspace {
+            let path = found[rule.appPathContains] ?? findApp(rule)
+            found[rule.appPathContains] = path
+            guard let path else {
+                logDebug("Tile for rule \"\(rule.appPathContains)\": no installed app found, no tile")
+                continue
+            }
+            if path == finderPath { finderHasRule = true }
+            if !paths.contains(path) { paths.append(path) }
+        }
+        result[workspace] = paths.map { tile(forAppAt: $0, workspace: workspace) }
+    }
+    if !finderHasRule {
+        for workspace in windowManager.workspaceNames {
+            result[workspace, default: []].append(tile(forAppAt: finderPath, workspace: workspace))
+        }
+    }
+    return result
+}
+
+// Where an Open text leads, with a helper app inside another app replaced
+// by the outer app (see helperAppInside below).
+func tileAppPath(openName: String) -> String? {
+    if let helper = helperAppInside(openName: openName) { return helper.outerApp }
+    return appPath(forOpenName: openName)
+}
+
 // The bundle id of the app a tile's Open text leads to: a full path is used
 // as it is, a plain name is looked up the same way `open -a` finds it (the
 // same deprecated lookup as resolvedAppIcon, for the same reason, see there).
@@ -568,7 +681,15 @@ struct LoadedSettings {
 
     init(config: SwitcherConfig, report: ConfigReport) {
         self.config = config
-        let launcherApps = resolveLauncherApps(from: config, report: report)
+        // The window manager first: with tilesFromWorkspaces on, the tiles
+        // are made from its rules.
+        let keybinds = resolveKeybinds(config.keybinds, report: report)
+        let windowManager = resolveWindowManager(config.windowManager, keybinds: keybinds, report: report)
+        self.keybinds = keybinds
+        self.windowManager = windowManager
+        let launcherApps = (config.tilesFromWorkspaces ?? true)
+            ? tilesFromRules(windowManager, config: config, report: report)
+            : resolveLauncherApps(from: config, report: report)
         self.launcherApps = launcherApps
         // Source 1: every "icon" set on a per-app entry inside "workspaces".
         // Source 2: config.json's standalone top-level "icons" dict — for an
@@ -581,8 +702,6 @@ struct LoadedSettings {
         } + standaloneIcons(config).sorted { $0.key < $1.key }.compactMap { (name, path) -> (String, NSImage)? in
             loadCustomIcon(path: path, context: "icons entry \"\(name)\"", report: report).map { (name, $0) }
         }
-        self.keybinds = resolveKeybinds(config.keybinds, report: report)
-        self.windowManager = resolveWindowManager(config.windowManager, keybinds: keybinds, report: report)
     }
 }
 
@@ -925,7 +1044,7 @@ func editConfigFile(_ description: String, touching paths: [[String]], shownTree
 // order name, match, open, newWindowStyle, icon, then unknown ones. To
 // change the layout, change the key orders here.
 
-let topLevelKeyOrder = ["keybinds", "workspaces", "showTileStatusText", "showWorkspacesInMenu", "autoReloadConfig", "icons", "windowManager"]
+let topLevelKeyOrder = ["keybinds", "workspaces", "tilesFromWorkspaces", "showTileStatusText", "showWorkspacesInMenu", "autoReloadConfig", "icons", "windowManager"]
 let windowManagerKeyOrder = ["workspaces", "rules", "toggleMaximizeKey", "maximizeNewWindows"]
 let keybindKeyOrder = ["cycleNext", "cyclePrevious", "enterGreyedRow", "exitGreyedRow", "pageUp", "pageDown", "confirm", "cancel", "second"]
 let appEntryKeyOrder = ["name", "match", "open", "newWindowStyle", "icon"]
@@ -1049,6 +1168,15 @@ func installedApp(at path: String) -> InstalledApp {
 // added by hand. Slow-ish (a few hundred apps), so the window runs it in
 // the background.
 func scanInstalledApps() -> [InstalledApp] {
+    installedAppPaths()
+        .map(installedApp(at:))
+        .sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+}
+
+// Only the places on disk, without opening each app (the slow part of
+// scanInstalledApps). Quick enough to run on every config load, which is
+// what tilesFromRules does when a rule's text isn't an app name.
+func installedAppPaths() -> [String] {
     let fileManager = FileManager.default
     let roots = ["/Applications", "/System/Applications", NSHomeDirectory() + "/Applications"]
     var paths = ["/System/Library/CoreServices/Finder.app"]
@@ -1067,10 +1195,7 @@ func scanInstalledApps() -> [InstalledApp] {
         }
     }
     var seen = Set<String>()
-    return paths
-        .filter { seen.insert($0).inserted }
-        .map(installedApp(at:))
-        .sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+    return paths.filter { seen.insert($0).inserted }
 }
 
 // The config.json entry for a picked app. "match" has to be the name

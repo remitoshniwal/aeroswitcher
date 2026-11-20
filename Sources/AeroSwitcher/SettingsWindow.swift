@@ -159,6 +159,10 @@ final class SettingsModel: ObservableObject {
         edit("set \(key) = \(value)", touching: [[key]]) { $0[key] = value }
     }
 
+    // Tiles come from the workspaces' apps (see tilesFromRules in
+    // Config.swift). Missing in the file means yes.
+    var tilesFromWorkspaces: Bool { config?.tilesFromWorkspaces ?? true }
+
     func toggleLaunchAtLogin() {
         menuBar?.launchAtLoginClicked()
         refreshToggles()
@@ -1055,14 +1059,21 @@ struct SettingsView: View {
             if let problem = model.fileProblem {
                 BrokenFileView(problem: problem, retry: { model.refresh() })
             } else {
+                // The Launcher tiles tab only exists while the tiles are
+                // set by hand (tilesFromWorkspaces off, Workspaces tab).
                 TabView(selection: $tab) {
                     GeneralTab(model: model).tabItem { Text("General") }.tag("General")
-                    LauncherTab(model: model).tabItem { Text("Launcher tiles") }.tag("Launcher tiles")
+                    WorkspacesTab(model: model).tabItem { Text("Workspaces") }.tag("Workspaces")
+                    if !model.tilesFromWorkspaces {
+                        LauncherTab(model: model).tabItem { Text("Launcher tiles") }.tag("Launcher tiles")
+                    }
                     KeysTab(model: model).tabItem { Text("Keys") }.tag("Keys")
                     IconsTab(model: model).tabItem { Text("Icons") }.tag("Icons")
-                    WorkspacesTab(model: model).tabItem { Text("Workspaces") }.tag("Workspaces")
                 }
                 .padding(12)
+                .onChange(of: model.tilesFromWorkspaces) { _, fromWorkspaces in
+                    if fromWorkspaces && tab == "Launcher tiles" { tab = "Workspaces" }
+                }
             }
         }
         .frame(width: 760, height: 560)
@@ -1103,12 +1114,28 @@ struct GeneralTab: View {
     var body: some View {
         Form {
             Section("Switcher") {
-                Toggle("Status text under launcher tiles", isOn: Binding(
+                // On: each workspace's apps (Workspaces tab) are its grey
+                // tiles. Off: a Launcher tiles tab appears to set them by hand.
+                Toggle("Use workspace apps as tiles", isOn: Binding(
+                    get: { model.tilesFromWorkspaces },
+                    set: { model.setTopLevelBool("tilesFromWorkspaces", $0) }))
+                    .help("Off: set the tiles yourself in the Launcher tiles tab.")
+                Toggle("Status text under tiles", isOn: Binding(
                     get: { model.config?.showTileStatusText ?? true },
                     set: { model.setTopLevelBool("showTileStatusText", $0) }))
-                Toggle("Reload config.json when saved", isOn: Binding(
-                    get: { model.config?.autoReloadConfig ?? true },
-                    set: { model.setTopLevelBool("autoReloadConfig", $0) }))
+            }
+            // The window manager's own settings. Were under the cards in the
+            // Workspaces tab until 2026-11-20; here they look like the rest.
+            if model.windowManagerConfig != nil {
+                Section("Windows") {
+                    Toggle("New windows fill the screen", isOn: Binding(
+                        get: { model.windowManagerConfig?.maximizeNewWindows ?? true },
+                        set: { model.setMaximizeNewWindows($0) }))
+                    LabeledContent("Resize key") {
+                        WindowManagerKeyChip(model: model, target: .toggleMaximize)
+                    }
+                    .help("Flips a window between filling the screen and a smaller size.")
+                }
             }
             Section("Menu Bar") {
                 Toggle("Show workspaces in the menu", isOn: Binding(
@@ -1125,6 +1152,9 @@ struct GeneralTab: View {
             }
             Section("config.json") {
                 Text(configFileURL().path).font(.callout).textSelection(.enabled)
+                Toggle("Reload when saved", isOn: Binding(
+                    get: { model.config?.autoReloadConfig ?? true },
+                    set: { model.setTopLevelBool("autoReloadConfig", $0) }))
                 HStack {
                     Button("Open") { NSWorkspace.shared.open(configFileURL()) }
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([configFileURL()]) }
@@ -1807,24 +1837,19 @@ struct WorkspacesTab: View {
                     ForEach(Array(workspaces.enumerated()), id: \.offset) { index, workspace in
                         card(index: index, workspace: workspace, count: workspaces.count)
                     }
-                    HStack {
-                        Button {
-                            model.addWindowManagerWorkspace()
-                        } label: {
-                            Label("Add Workspace", systemImage: "plus")
-                        }
-                        if aeroSpaceConfig != nil { importButton }
-                        Spacer()
-                    }
-                    .padding(.top, 2)
-                    leftoverNotes
-                    Divider().padding(.vertical, 4)
-                    maximizeRow
+                    addRow(aeroSpaceConfig: aeroSpaceConfig)
+                    if !model.tilesFromWorkspaces { leftoverNotes }
                     problems
                 }
             }
-            .padding(20)
+            // Less space above and below than at the sides: with 20 all
+            // round, six workspaces were a few points too tall for the
+            // window and the tab scrolled by that much.
+            .padding(.horizontal, 20)
+            .padding(.vertical, 8)
         }
+        // Only scrolls when the cards really don't fit (a seventh workspace).
+        .scrollBounceBehavior(.basedOnSize)
         .task { await model.loadInstalledAppsForIcons() }
     }
 
@@ -1902,15 +1927,28 @@ struct WorkspacesTab: View {
 
     // MARK: Below the cards
 
-    private var maximizeRow: some View {
-        HStack(spacing: 12) {
-            Toggle("New windows fill the screen", isOn: Binding(
-                get: { model.windowManagerConfig?.maximizeNewWindows ?? true },
-                set: { model.setMaximizeNewWindows($0) }))
-            Spacer()
-            Text("Resize key")
-                .foregroundStyle(.secondary)
-            WindowManagerKeyChip(model: model, target: .toggleMaximize)
+    // Under the last card: an empty, dashed card that adds a workspace
+    // (same size and corners as the cards, so it reads as "one more"), and
+    // Import from AeroSpace next to it while ~/.aerospace.toml exists. The
+    // switches that used to sit here are in the General tab now.
+    private func addRow(aeroSpaceConfig: String?) -> some View {
+        HStack(spacing: 10) {
+            Button {
+                model.addWindowManagerWorkspace()
+            } label: {
+                Label("Add Workspace", systemImage: "plus")
+                    .frame(maxWidth: .infinity, minHeight: 36)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.18), style: StrokeStyle(lineWidth: 1, dash: [5, 4])))
+            if aeroSpaceConfig != nil {
+                importButton
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 

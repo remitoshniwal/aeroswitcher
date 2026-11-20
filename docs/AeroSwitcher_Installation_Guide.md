@@ -75,7 +75,7 @@ The ticks update by themselves. It is always in the menu bar menu under **Permis
 
 ![The switcher panel](images/switcher.png)
 
-**C4. Make the workspaces yours.** Menu bar menu > **Settings... > Workspaces**: rename workspaces, add more, record their keys by clicking the key chip, and send apps to a workspace with **+ App**. Right-click an app to move it to another workspace. The other tabs set up grey launcher tiles, the keys inside the switcher and custom icons. Every change applies at once.
+**C4. Make the workspaces yours.** Menu bar menu > **Settings... > Workspaces**: rename workspaces, add more, record their keys by clicking the key chip, and send apps to a workspace with **+ App**. Right-click an app to move it to another workspace. A workspace's apps also show as grey tiles in Cmd+Tab while they aren't open; to pick the tiles yourself, turn off **Use workspace apps as tiles** in **General** and a **Launcher tiles** tab appears. The other tabs set the keys inside the switcher and custom icons. Every change applies at once.
 
 **C5. Optional: start it at login.** Turn on **Open at Login** in the menu bar menu (also in **Settings... > General**). Log out and back in once to check it starts by itself.
 
