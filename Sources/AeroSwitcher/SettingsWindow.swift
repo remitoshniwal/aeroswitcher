@@ -1928,9 +1928,14 @@ struct WorkspacesTab: View {
     // MARK: Below the cards
 
     // Under the last card: an empty, dashed card that adds a workspace
-    // (same size and corners as the cards, so it reads as "one more"), and
-    // Import from AeroSpace next to it while ~/.aerospace.toml exists. The
+    // (same size and corners as the cards, so it reads as "one more"). The
     // switches that used to sit here are in the General tab now.
+    //
+    // Import from AeroSpace only shows while there are no workspaces yet
+    // (2026-11-21): it REPLACES every workspace, and ~/.aerospace.toml
+    // stays on a Mac long after AeroSpace is gone, so for anyone already
+    // set up it was one wrong click away. With no workspaces nothing can
+    // be lost. The empty state (no windowManager section) shows it too.
     private func addRow(aeroSpaceConfig: String?) -> some View {
         HStack(spacing: 10) {
             Button {
@@ -1944,7 +1949,7 @@ struct WorkspacesTab: View {
             .foregroundStyle(.secondary)
             .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.18), style: StrokeStyle(lineWidth: 1, dash: [5, 4])))
-            if aeroSpaceConfig != nil {
+            if aeroSpaceConfig != nil && model.windowManagerWorkspaces.isEmpty {
                 importButton
                     .buttonStyle(.borderless)
                     .foregroundStyle(.secondary)
