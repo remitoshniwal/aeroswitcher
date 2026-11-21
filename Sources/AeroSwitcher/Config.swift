@@ -525,9 +525,9 @@ func resolveLauncherApps(from config: SwitcherConfig, report: ConfigReport) -> [
 // With "tilesFromWorkspaces" on (the default), each workspace's grey tiles
 // are the apps its rules send there, in the same order as the Workspaces
 // tab shows them, so adding an app to a workspace also gives it a tile
-// there. Finder is the exception: unless a rule puts it somewhere, it gets
-// a tile in every workspace (a new Finder window opens in the workspace
-// you're in, it has no home of its own).
+// there. Every app works the same way, Finder too: no rule, no tile.
+// (A Finder tile in every workspace was tried on 2026-11-20 and removed the
+// next day: the owner doesn't want apps added that he didn't pick.)
 //
 // A rule is only a piece of text ("Whatsapp.app", "Ableton Live"), so the
 // app is looked up: first the way `open -a` finds a name, then, for text
@@ -591,8 +591,6 @@ func tilesFromRules(_ windowManager: WindowManagerSettings, config: SwitcherConf
                            newWindowScript: script, customIcon: icon, bundleID: app.bundleID)
     }
 
-    let finderPath = "/System/Library/CoreServices/Finder.app"
-    var finderHasRule = false
     var result: [String: [LauncherApp]] = [:]
     var found: [String: String?] = [:]   // rule text -> app, each looked up once
     for workspace in windowManager.workspaceNames {
@@ -604,15 +602,9 @@ func tilesFromRules(_ windowManager: WindowManagerSettings, config: SwitcherConf
                 logDebug("Tile for rule \"\(rule.appPathContains)\": no installed app found, no tile")
                 continue
             }
-            if path == finderPath { finderHasRule = true }
             if !paths.contains(path) { paths.append(path) }
         }
         result[workspace] = paths.map { tile(forAppAt: $0, workspace: workspace) }
-    }
-    if !finderHasRule {
-        for workspace in windowManager.workspaceNames {
-            result[workspace, default: []].append(tile(forAppAt: finderPath, workspace: workspace))
-        }
     }
     return result
 }
