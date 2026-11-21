@@ -579,7 +579,14 @@ final class SettingsModel: ObservableObject {
     func addWindowManagerRule(app: String, workspace: String) {
         changeWindowManager("add window manager rule \(app) -> \(workspace)") { section in
             var rules = Self.entries("rules", in: section)
-            if let i = rules.firstIndex(where: { ($0["app"] as? String)?.caseInsensitiveCompare(app) == .orderedSame }) {
+            func same(_ rule: [String: Any]) -> Bool { (rule["app"] as? String)?.caseInsensitiveCompare(app) == .orderedSame }
+            if isStaysWhereOpenedRule(app) {
+                // Finder can be in several workspaces (see
+                // isStaysWhereOpenedRule): add it here unless it already is.
+                if !rules.contains(where: { same($0) && $0["workspace"] as? String == workspace }) {
+                    rules.append(["app": app, "workspace": workspace])
+                }
+            } else if let i = rules.firstIndex(where: same) {
                 rules[i]["workspace"] = workspace
             } else {
                 rules.append(["app": app, "workspace": workspace])
@@ -628,6 +635,14 @@ final class SettingsModel: ObservableObject {
         changeWindowManager("set windowManager.rules[\(index)].\(field) = \(value)") { section in
             var rules = Self.entries("rules", in: section)
             guard rules.indices.contains(index) else { return }
+            // Finder moved to a workspace that already has Finder: the two
+            // would be the same, so the moved one just goes.
+            if field == "workspace", let app = rules[index]["app"] as? String, isStaysWhereOpenedRule(app),
+               rules.enumerated().contains(where: { $0.offset != index && ($0.element["app"] as? String)?.caseInsensitiveCompare(app) == .orderedSame && $0.element["workspace"] as? String == value }) {
+                rules.remove(at: index)
+                section["rules"] = rules
+                return
+            }
             rules[index][field] = value
             section["rules"] = rules
         }
@@ -1852,7 +1867,7 @@ struct WorkspacesTab: View {
                         // Drag an app onto another card to move it there.
                         .draggable("rule:\(ruleIndex)") { AppChip(title: look.title, icon: look.icon) }
                 }
-                AddAppButton { chooseApp(for: workspace.name) }
+                addAppMenu(workspace: workspace.name, hasFinder: rules.contains { isStaysWhereOpenedRule($0.element.app) })
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             iconButton("trash", help: "Remove this workspace", label: "Remove \(workspace.name)", disabled: false) {
@@ -1944,6 +1959,26 @@ struct WorkspacesTab: View {
 
     // "+ App": pick an app. Its rule text is the app's name without ".app"
     // ("Google Chrome"), which is part of its place on disk on every Mac.
+    // "+ App" in a workspace card: a small menu, because Finder lives in a
+    // hidden system folder the app picker doesn't show. Finder can be in
+    // several workspaces (isStaysWhereOpenedRule in Config.swift), so it's
+    // only left out where it already is.
+    private func addAppMenu(workspace: String, hasFinder: Bool) -> some View {
+        Menu {
+            Button("Choose App…") { chooseApp(for: workspace) }
+            if !hasFinder {
+                Button("Finder") { model.addWindowManagerRule(app: "Finder", workspace: workspace) }
+            }
+        } label: {
+            Label("App", systemImage: "plus").font(.callout)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .padding(.vertical, 3)
+        .help("Add an app")
+    }
+
     private func chooseApp(for workspace: String) {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.application]

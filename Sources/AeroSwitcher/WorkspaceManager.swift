@@ -344,6 +344,9 @@ final class WorkspaceManager: @unchecked Sendable {
     // know under another name (Minecraft's game runs as "java") is also
     // tried by that name.
     private func ruleWorkspace(for window: TrackedWindow) -> String? {
+        // Finder: its rules only give it tiles, its windows stay where they
+        // were opened (staysWhereOpenedBundleIds in Config.swift).
+        if let id = window.bundleId, staysWhereOpenedBundleIds.contains(id) { return nil }
         let rules = windowManagerSettings
         if let path = window.appPath, let name = rules.workspace(forBundlePath: path) { return name }
         if let owner = knownApps.owner(ofPID: window.pid)?.name, let name = rules.workspace(forBundlePath: owner) { return name }

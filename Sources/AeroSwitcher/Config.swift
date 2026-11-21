@@ -539,6 +539,21 @@ func resolveLauncherApps(from config: SwitcherConfig, report: ConfigReport) -> [
 // An old hand-made tile for the same app (any workspace) still lends its
 // name, match text, Open text, new-window style and icon, so turning this
 // on doesn't rename anything ("Chrome" stays "Chrome").
+// Finder is the one app whose rules only give it tiles (2026-11-21, the
+// owner's choice): it can be in as many workspaces as you like, and each
+// Finder window stays in the workspace it was opened in, like on a normal
+// Mac. A rule normally also pulls the app's new windows into its workspace,
+// which for an app listed in five workspaces would send every window to the
+// first one. WorkspaceManager.ruleWorkspace skips these windows, and the
+// Workspaces tab lets these apps be added to several workspaces. To give
+// another app the same treatment, add its bundle id and its rule text here.
+let staysWhereOpenedBundleIds: Set<String> = ["com.apple.finder"]
+
+func isStaysWhereOpenedRule(_ text: String) -> Bool {
+    let lowered = text.lowercased()
+    return lowered == "finder" || lowered == "finder.app" || lowered.hasSuffix("/finder.app")
+}
+
 func tilesFromRules(_ windowManager: WindowManagerSettings, config: SwitcherConfig, report: ConfigReport) -> [String: [LauncherApp]] {
     // The old tiles by the app they open, worked out once.
     var oldTiles: [String: LauncherAppConfig] = [:]
