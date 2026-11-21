@@ -52,7 +52,7 @@ An app you built yourself opens without the Open Anyway step from part A, becaus
 
 ## C. First launch
 
-**C1. If you used AeroSpace before:** quit AeroSpace and remove it from **System Settings > General > Login Items**. Two window managers at once would fight over every window, so AeroSwitcher pauses while AeroSpace runs (the menu bar then shows a warning triangle). On its first launch AeroSwitcher copies your workspaces, their keys and your app rules from `~/.aerospace.toml`. It only reads that file and never changes it.
+**C1. If you used AeroSpace before:** quit AeroSpace and remove it from **System Settings > General > Login Items**. Two window managers at once would fight over every window, so AeroSwitcher pauses while AeroSpace runs (the menu bar then shows a warning triangle). AeroSwitcher doesn't read AeroSpace's config: set your workspaces up again in **Settings > Workspaces** (step C4).
 
 **C2. Grant two permissions.** AeroSwitcher opens its **Permissions** window and shows what's missing, with a button for each. Both are in **System Settings > Privacy & Security**:
 
@@ -65,7 +65,7 @@ If AeroSwitcher isn't in a list yet, click the **+** under the list, choose Aero
 
 The ticks update by themselves. It is always in the menu bar menu under **Permissions…**.
 
-**C3. Try it.** You start with four workspaces: **Main**, **Work**, **Personal** and **Extra**, on **Option+1** to **Option+4** (or your AeroSpace ones). The menu bar shows the one you're in, and every window that was open is in it.
+**C3. Try it.** You start with four workspaces: **Main**, **Work**, **Personal** and **Extra**, on **Option+1** to **Option+4**. The menu bar shows the one you're in, and every window that was open is in it.
 
 - Press **Option+2**. Your windows disappear and the menu bar says Work. Open an app: its window belongs to Work.
 - Press **Option+1** to go back. Main's windows return exactly where they were.

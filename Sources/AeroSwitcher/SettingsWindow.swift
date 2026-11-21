@@ -732,39 +732,6 @@ final class SettingsModel: ObservableObject {
         }
     }
 
-    // Import from AeroSpace's .aerospace.toml (only read, never changed).
-    // Asks first with the counts, then replaces the workspaces, rules and
-    // maximize settings in ONE save. Keys in the section that AeroSwitcher
-    // doesn't know are kept, the same as every other change here.
-    func importFromAeroSpace() {
-        guard let path = aeroSpaceConfigFilePath() else { return }
-        guard let imported = windowManagerSectionFromAeroSpaceConfig(atPath: path) else {
-            showFailureAlert("Couldn't import AeroSpace's config",
-                             "No workspaces found in \(path).")
-            return
-        }
-        let workspaces = (imported["workspaces"] as? [Any])?.count ?? 0
-        let rules = (imported["rules"] as? [Any])?.count ?? 0
-        let alert = NSAlert()
-        alert.messageText = "Import from AeroSpace?"
-        let counts = "\(workspaces) workspace\(workspaces == 1 ? "" : "s"), \(rules) rule\(rules == 1 ? "" : "s")."
-        let replaces = windowManagerConfig == nil ? "" : " Replaces your current workspaces."
-        alert.informativeText = counts + replaces
-        alert.addButton(withTitle: windowManagerConfig == nil ? "Import" : "Replace")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else {
-            logDebug("Settings: import from AeroSpace's config cancelled")
-            return
-        }
-        let oldNames = windowManagerWorkspaceNames
-        let newNames = (imported["workspaces"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String }
-        let saved = changeWindowManager("import \(workspaces) workspaces and \(rules) rules from \(path)") { section in
-            for key in windowManagerKeyOrder { section[key] = nil }
-            for (key, value) in imported { section[key] = value }
-        }
-        if saved { noteLeftoverTiles(for: oldNames.filter { !newNames.contains($0) }) }
-    }
-
     // MARK: Icons
 
     struct IconRow: Identifiable {
@@ -1825,19 +1792,16 @@ struct WorkspacesTab: View {
     @State private var dropTarget: String?
 
     var body: some View {
-        // Looked up on each redraw (two "does this file exist" checks, cheap),
-        // so the Import button appears as soon as the file does.
-        let aeroSpaceConfig = aeroSpaceConfigFilePath()
         ScrollView {
             VStack(alignment: .leading, spacing: 6) {
                 if model.windowManagerConfig == nil {
-                    emptyState(aeroSpaceConfig: aeroSpaceConfig)
+                    emptyState
                 } else {
                     let workspaces = model.windowManagerWorkspaces
                     ForEach(Array(workspaces.enumerated()), id: \.offset) { index, workspace in
                         card(index: index, workspace: workspace, count: workspaces.count)
                     }
-                    addRow(aeroSpaceConfig: aeroSpaceConfig)
+                    addRow
                     if !model.tilesFromWorkspaces { leftoverNotes }
                     problems
                 }
@@ -1930,13 +1894,7 @@ struct WorkspacesTab: View {
     // Under the last card: an empty, dashed card that adds a workspace
     // (same size and corners as the cards, so it reads as "one more"). The
     // switches that used to sit here are in the General tab now.
-    //
-    // Import from AeroSpace only shows while there are no workspaces yet
-    // (2026-11-21): it REPLACES every workspace, and ~/.aerospace.toml
-    // stays on a Mac long after AeroSpace is gone, so for anyone already
-    // set up it was one wrong click away. With no workspaces nothing can
-    // be lost. The empty state (no windowManager section) shows it too.
-    private func addRow(aeroSpaceConfig: String?) -> some View {
+    private var addRow: some View {
         HStack(spacing: 10) {
             Button {
                 model.addWindowManagerWorkspace()
@@ -1949,11 +1907,6 @@ struct WorkspacesTab: View {
             .foregroundStyle(.secondary)
             .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.18), style: StrokeStyle(lineWidth: 1, dash: [5, 4])))
-            if aeroSpaceConfig != nil && model.windowManagerWorkspaces.isEmpty {
-                importButton
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(.secondary)
-            }
         }
     }
 
@@ -1980,18 +1933,11 @@ struct WorkspacesTab: View {
     }
 
     // config.json has no "windowManager" section at all yet.
-    private func emptyState(aeroSpaceConfig: String?) -> some View {
+    private var emptyState: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("No workspaces yet").font(.headline)
-            HStack {
-                Button("Add Workspace") { model.addWindowManagerWorkspace() }
-                if aeroSpaceConfig != nil { importButton }
-            }
+            Button("Add Workspace") { model.addWindowManagerWorkspace() }
         }
-    }
-
-    private var importButton: some View {
-        Button("Import from AeroSpace…") { model.importFromAeroSpace() }
     }
 
     // MARK: Asking for an app or a text

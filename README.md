@@ -54,7 +54,7 @@ AeroSwitcher opens a Permissions window that shows what's missing, with a button
 
 **5. Optional: start it at login.** Turn on **Open at Login** in its menu bar menu.
 
-Coming from AeroSpace? Quit AeroSpace and remove it from **System Settings > General > Login Items** first. On its first launch AeroSwitcher copies your workspaces, their keys and your app rules from `~/.aerospace.toml` (it only reads that file, never changes it).
+Coming from AeroSpace? Quit AeroSpace and remove it from **System Settings > General > Login Items** first. AeroSwitcher doesn't read AeroSpace's config, so set your workspaces up again in **Settings > Workspaces**.
 
 The [installation guide](docs/AeroSwitcher_Installation_Guide.md) walks through all of it step by step, and covers building it yourself.
 

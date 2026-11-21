@@ -1696,93 +1696,7 @@ func launchApp(_ app: LauncherApp) {
     }
 }
 
-// MARK: Importing AeroSpace's rules (Phase 14)
-
-// Builds a "windowManager" section from an AeroSpace config file
-// (.aerospace.toml), so moving from AeroSpace to AeroSwitcher's own window
-// manager doesn't mean typing everything in again. It only READS that file,
-// never changes it.
-//
-// No TOML library: AeroSpace's file is read line by line, looking for the
-// few kinds of lines that matter here, which is enough because they always
-// look the same:
-//   persistent-workspaces = ["Core", "School", ...]       the workspaces, in order
-//   alt-q = 'workspace Core'                              a workspace's key
-//   { if = 'test %{app-bundle-path} ~= "Spotify.app"', run = ['move-node-to-workspace Core', ...] }   a rule
-//   alt-f = '... toggle-maximize.sh ...'                  the maximize toggle key
-//   ... maximize.applescript ...                          new windows are maximized
-// Lines starting with # are notes in TOML and are skipped. A workspace that
-// only appears in a binding (not in persistent-workspaces) is added after
-// the others. Returns nil when nothing usable was found.
-func windowManagerSectionFromAeroSpaceConfig(atPath path: String) -> [String: Any]? {
-    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
-    var names: [String] = []
-    var keys: [String: String] = [:]
-    var rules: [[String: Any]] = []
-    var toggleKey: String?
-    var maximize = false
-
-    func quoted(_ line: Substring) -> [String] {
-        // Every piece of text between double quotes on the line.
-        line.split(separator: "\"", omittingEmptySubsequences: false).enumerated()
-            .filter { $0.offset % 2 == 1 }.map { String($0.element) }
-    }
-    for rawLine in text.split(separator: "\n") {
-        let line = rawLine.trimmingCharacters(in: .whitespaces)
-        if line.hasPrefix("#") || line.isEmpty { continue }
-        if line.hasPrefix("persistent-workspaces") {
-            for name in quoted(Substring(line)) where !name.isEmpty && !names.contains(name) { names.append(name) }
-            continue
-        }
-        if line.contains("maximize.applescript") { maximize = true }
-        // A binding: alt-<key> = '<command>' (not alt-shift-..., those move
-        // windows and use the same key anyway).
-        if line.hasPrefix("alt-"), !line.hasPrefix("alt-shift-"), let equals = line.firstIndex(of: "=") {
-            let key = line[line.index(line.startIndex, offsetBy: 4)..<equals].trimmingCharacters(in: .whitespaces)
-            let command = line[line.index(after: equals)...].trimmingCharacters(in: CharacterSet(charactersIn: " '\""))
-            if command.hasPrefix("workspace ") {
-                let name = String(command.dropFirst("workspace ".count)).trimmingCharacters(in: .whitespaces)
-                if !name.isEmpty && keyCode(forName: key) != nil { keys[name] = key }
-                if !names.contains(name) { names.append(name) }
-            } else if command.contains("toggle-maximize") && keyCode(forName: key) != nil {
-                toggleKey = key
-            }
-            continue
-        }
-        // A rule.
-        if line.contains("%{app-bundle-path}"), let move = line.range(of: "move-node-to-workspace ") {
-            guard let app = quoted(Substring(line)).first, !app.isEmpty else { continue }
-            let rest = line[move.upperBound...]
-            let workspace = String(rest.prefix { $0 != "'" && $0 != "\"" && $0 != "," && $0 != "]" }).trimmingCharacters(in: .whitespaces)
-            guard !workspace.isEmpty else { continue }
-            rules.append(["app": app, "workspace": workspace])
-            if !names.contains(workspace) { names.append(workspace) }
-        }
-    }
-    guard !names.isEmpty else { return nil }
-    var section: [String: Any] = [
-        "workspaces": names.map { name -> [String: Any] in
-            var entry: [String: Any] = ["name": name]
-            if let key = keys[name] { entry["key"] = key }
-            return entry
-        },
-        "rules": rules,
-        "maximizeNewWindows": maximize,
-    ]
-    if let toggleKey { section["toggleMaximizeKey"] = toggleKey }
-    return section
-}
-
-// Where AeroSpace's config file is, if there is one. Same two places
-// AeroSpace itself looks.
-func aeroSpaceConfigFilePath() -> String? {
-    let home = FileManager.default.homeDirectoryForCurrentUser.path
-    let candidates = [home + "/.aerospace.toml", home + "/.config/aerospace/aerospace.toml"]
-    return candidates.first { FileManager.default.fileExists(atPath: $0) }
-}
-
-// The workspaces a brand new user starts with, when there is no AeroSpace
-// config to copy from: four plain names on Option+1 to Option+4, Option+F
+// The workspaces a brand new user starts with: four plain names on Option+1 to Option+4, Option+F
 // to toggle a window between full screen size and a smaller one, and every
 // new window made to fill the screen. All of it can be changed in Settings >
 // Workspaces; change the names or keys here to give new users a different
@@ -1799,10 +1713,13 @@ let starterWindowManagerSection: [String: Any] = [
     "maximizeNewWindows": true,
 ]
 
-// Once, at launch: if config.json has no "windowManager" section yet, one
-// is added. Someone coming from AeroSpace gets their workspaces, keys and
-// app rules copied from their AeroSpace config (only read, never changed);
-// anyone else gets the starter set above. Without workspaces the window
+// Once, at launch: if config.json has no "windowManager" section yet, the
+// starter set above is added. (Until 2026-11-21 someone coming from
+// AeroSpace got their workspaces copied from ~/.aerospace.toml instead, and
+// Settings had an Import from AeroSpace button; both were removed, the
+// owner's call: AeroSwitcher no longer has anything to do with AeroSpace's
+// config. See git history before that date if it's ever wanted back.)
+// Without workspaces the window
 // manager has nothing to do and stays paused. Never touches a section that
 // is already there, even an empty one (that is the user's own choice).
 // Main thread.
@@ -1810,20 +1727,12 @@ let starterWindowManagerSection: [String: Any] = [
 func addWindowManagerSectionIfMissing() {
     let snapshot = readConfigSnapshot()
     guard let tree = snapshot.tree, tree["windowManager"] == nil else { return }
-    let path = aeroSpaceConfigFilePath()
-    let imported = path.flatMap { windowManagerSectionFromAeroSpaceConfig(atPath: $0) }
-    let section = imported ?? starterWindowManagerSection
+    let section = starterWindowManagerSection
     let workspaces = (section["workspaces"] as? [Any])?.count ?? 0
-    let rules = (section["rules"] as? [Any])?.count ?? 0
-    let what = imported != nil ? "copy the workspaces from AeroSpace's config" : "add the starter workspaces"
-    let outcome = editConfigFile(what, touching: [["windowManager"]], shownTree: tree) { tree in
+    let outcome = editConfigFile("add the starter workspaces", touching: [["windowManager"]], shownTree: tree) { tree in
         tree["windowManager"] = section
     }
     if case .saved = outcome {
-        if let path, imported != nil {
-            logInfo("Copied \(workspaces) workspaces and \(rules) app rules from \(path) into config.json (windowManager). AeroSpace's file was only read.")
-        } else {
-            logInfo("Added the \(workspaces) starter workspaces to config.json (windowManager).")
-        }
+        logInfo("Added the \(workspaces) starter workspaces to config.json (windowManager).")
     }
 }
